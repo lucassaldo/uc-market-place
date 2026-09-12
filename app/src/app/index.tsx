@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import {
   View,
+Image,
   Text,
   TextInput,
   TouchableOpacity,
@@ -22,7 +23,21 @@ export default function HomeScreen() {
   const [search, setSearch] = useState("");
   const [showSellForm, setShowSellForm] = useState(false);
   const [itemTitle, setItemTitle] = useState("");
-const [listings, setListings] = useState([
+const [itemPrice, setItemPrice] = useState("");
+ const [itemDescription, setItemDescription] = useState("");
+const [itemImage, setItemImage] = useState("");
+const [itemCategory, setItemCategory] = useState("Electronics");
+const [listings, setListings] = useState<Array<{
+  title: string;
+  description?: string;
+  category: string;
+  seller: string;
+  price: string;
+  emoji: string;
+image?: string;
+}>>([
+  
+  
     {
       title: "Mini Fridge",
       category: "Electronics",
@@ -221,7 +236,11 @@ const [listings, setListings] = useState([
                 }
               >
                 <View style={styles.iconBox}>
-                  <Text style={styles.emoji}>{item.emoji}</Text>
+              {item.image ? (
+  <Image source={{ uri: item.image }} style={{ width: 60, height: 60 }} />
+) : (
+  <Text style={styles.emoji}>{item.emoji}</Text>
+)}
                 </View>
 
                 <View style={styles.cardInfo}>
@@ -256,6 +275,38 @@ const [listings, setListings] = useState([
   value={itemTitle}
   onChangeText={setItemTitle}
 />
+<TextInput
+  placeholder="Price"
+  style={styles.search}
+  value={itemPrice}
+  onChangeText={setItemPrice}
+/>
+<TextInput
+  placeholder="Description / condition"
+  style={styles.search}
+  value={itemDescription}
+  onChangeText={setItemDescription}
+/>
+<Text>Category: {itemCategory}</Text>
+<TouchableOpacity onPress={() => setItemCategory("Furniture")}>
+<Text>Furniture</Text>
+</TouchableOpacity>
+<TouchableOpacity onPress={() => setItemCategory("Electronics")}>
+<Text>Electronics</Text>
+</TouchableOpacity>
+<TouchableOpacity onPress={() => setItemCategory("Clothing")}>
+<Text>Clothing</Text>
+</TouchableOpacity>
+<input
+  type="file"
+  accept="image/*"
+  onChange={(e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setItemImage(URL.createObjectURL(file));
+    }
+  }}
+/>
 <TouchableOpacity
   style={styles.sellButton}
   onPress={() => {
@@ -268,14 +319,19 @@ const [listings, setListings] = useState([
       ...listings,
       {
         title: itemTitle.trim(),
-        category: "Services",
+      description: itemDescription.trim(),
+      category: itemCategory,
         seller: "You",
-        price: "$0",
+      price: "$" + itemPrice,
         emoji: "📦",
+      image: itemImage,
       },
     ]);
 
     setItemTitle("");
+  setItemPrice("");
+  setItemDescription("");
+  setItemImage("");
     setShowSellForm(false);
     alert("Your item was listed!");
   }}
