@@ -22,7 +22,43 @@ export default function HomeScreen() {
   const [search, setSearch] = useState("");
   const [showSellForm, setShowSellForm] = useState(false);
   const [itemTitle, setItemTitle] = useState("");
-
+const [listings, setListings] = useState([
+    {
+      title: "Mini Fridge",
+      category: "Electronics",
+      seller: "Alex",
+      price: "$50",
+      emoji: "🧊",
+    },
+    {
+      title: "Calculus Textbook",
+      category: "Textbooks",
+      seller: "Jordan",
+      price: "$25",
+      emoji: "📚",
+    },
+    {
+      title: "Desk Lamp",
+      category: "Furniture",
+      seller: "Mike",
+      price: "$15",
+      emoji: "💡",
+    },
+    {
+      title: "Nike Hoodie",
+      category: "Clothing",
+      seller: "Chris",
+      price: "$30",
+      emoji: "👕",
+    },
+    {
+      title: "Homemade Cookies",
+      category: "Food",
+      seller: "Sam",
+      price: "$8",
+      emoji: "🍪",
+    },
+  ]);
   if (!loggedIn) {
     return (
       <SafeAreaView style={styles.container}>
@@ -99,43 +135,7 @@ export default function HomeScreen() {
     );
   }
 
-  const [listings, setListings] = useState([
-    {
-      title: "Mini Fridge",
-      category: "Electronics",
-      seller: "Alex",
-      price: "$50",
-      emoji: "🧊",
-    },
-    {
-      title: "Calculus Textbook",
-      category: "Textbooks",
-      seller: "Jordan",
-      price: "$25",
-      emoji: "📚",
-    },
-    {
-      title: "Desk Lamp",
-      category: "Furniture",
-      seller: "Mike",
-      price: "$15",
-      emoji: "💡",
-    },
-    {
-      title: "Nike Hoodie",
-      category: "Clothing",
-      seller: "Chris",
-      price: "$30",
-      emoji: "👕",
-    },
-    {
-      title: "Homemade Cookies",
-      category: "Food",
-      seller: "Sam",
-      price: "$8",
-      emoji: "🍪",
-    },
-  ]);
+  
 
   const categories = [
     "All",
