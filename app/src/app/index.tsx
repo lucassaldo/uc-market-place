@@ -99,7 +99,7 @@ export default function HomeScreen() {
     );
   }
 
-  const listings = [
+  const [listings, setListings] = useState([
     {
       title: "Mini Fridge",
       category: "Electronics",
@@ -135,7 +135,7 @@ export default function HomeScreen() {
       price: "$8",
       emoji: "🍪",
     },
-  ];
+  ]);
 
   const categories = [
     "All",
@@ -258,7 +258,27 @@ export default function HomeScreen() {
 />
 <TouchableOpacity
   style={styles.sellButton}
-onPress={() => alert("Your item was listed!")}
+  onPress={() => {
+    if (!itemTitle.trim()) {
+      alert("Please enter an item name.");
+      return;
+    }
+
+    setListings([
+      ...listings,
+      {
+        title: itemTitle.trim(),
+        category: "Services",
+        seller: "You",
+        price: "$0",
+        emoji: "📦",
+      },
+    ]);
+
+    setItemTitle("");
+    setShowSellForm(false);
+    alert("Your item was listed!");
+  }}
 >
   <Text style={styles.sellButtonText}>Publish listing</Text>
 </TouchableOpacity>
