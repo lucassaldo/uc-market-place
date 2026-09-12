@@ -20,6 +20,8 @@ export default function HomeScreen() {
   const [password, setPassword] = useState("");
 
   const [search, setSearch] = useState("");
+  const [showSellForm, setShowSellForm] = useState(false);
+  const [itemTitle, setItemTitle] = useState("");
 
   if (!loggedIn) {
     return (
@@ -239,17 +241,29 @@ export default function HomeScreen() {
 
         <TouchableOpacity
           style={styles.sellButton}
-          onPress={() =>
-            Alert.alert(
-              "Sell an item",
-              "The listing form will be added next."
-            )
-          }
+          onPress={() => setShowSellForm(true)}
         >
           <Text style={styles.sellButtonText}>
             + Sell something
           </Text>
         </TouchableOpacity>
+        {showSellForm && (
+  <View style={{ padding: 20 }}>
+    <Text>Sell an item</Text>
+    <TextInput
+  placeholder="What are you selling?"
+  style={styles.search}
+  value={itemTitle}
+  onChangeText={setItemTitle}
+/>
+<TouchableOpacity
+  style={styles.sellButton}
+  onPress={() => Alert.alert("Success", "Your item was listed!")}
+>
+  <Text style={styles.sellButtonText}>Publish listing</Text>
+</TouchableOpacity>
+  </View>
+)}
 
         <Text style={styles.footer}>
           UC Market • Made for students
