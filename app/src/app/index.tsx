@@ -258,7 +258,7 @@ export default function HomeScreen() {
 />
 <TouchableOpacity
   style={styles.sellButton}
-  onPress={() => Alert.alert("Success", "Your item was listed!")}
+  onPress={() => alert("Your item was listed!")}
 >
   <Text style={styles.sellButtonText}>Publish listing</Text>
 </TouchableOpacity>
