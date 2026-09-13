@@ -200,6 +200,7 @@ image?: string;
           {categories.map((category) => (
             <TouchableOpacity
               key={category}
+              onPress={() => setSearch(category === "All" ? "" : category)}
               style={[
                 styles.category,
                 category === "All" && styles.categoryActive,
