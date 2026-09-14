@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
 Image,
@@ -11,7 +11,8 @@ Image,
   SafeAreaView,
   Alert,
 } from "react-native";
-
+import { createClient } from "@supabase/supabase-js";
+const supabase = createClient(process.env.EXPO_PUBLIC_SUPABASE_URL!, process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY!);
 export default function HomeScreen() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
@@ -28,6 +29,7 @@ const [itemPrice, setItemPrice] = useState("");
 const [itemImage, setItemImage] = useState("");
 const [itemCategory, setItemCategory] = useState("Electronics");
 const [listings, setListings] = useState<Array<{
+
   title: string;
   description?: string;
   category: string;
@@ -36,6 +38,7 @@ const [listings, setListings] = useState<Array<{
   emoji: string;
 image?: string;
 }>>([
+
   
   
     {
@@ -74,6 +77,15 @@ image?: string;
       emoji: "🍪",
     },
   ]);
+  useEffect(() => {
+    const loadListings = async () => {
+      const { data, error } = await supabase.from("listings").select("*");
+      if (!error && data) {
+    setListings(data);
+    }
+    };
+  loadListings();
+  }, []);
   if (!loggedIn) {
     return (
       <SafeAreaView style={styles.container}>
@@ -310,13 +322,24 @@ image?: string;
 />
 <TouchableOpacity
   style={styles.sellButton}
-  onPress={() => {
+onPress={async () => {
     if (!itemTitle.trim()) {
       alert("Please enter an item name.");
       return;
     }
-
-    setListings([
+const { error } = await supabase.from("listings").insert({
+  title: itemTitle.trim(),
+  description: itemDescription.trim(),
+  category: itemCategory,
+  seller: "You",
+  price: "$" + itemPrice,
+  image: itemImage,
+  });
+if (error) {
+alert(error.message);
+return;
+} 
+  setListings([
       ...listings,
       {
         title: itemTitle.trim(),
