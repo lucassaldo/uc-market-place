@@ -5,6 +5,7 @@ import {
 Image,
   Text,
   TextInput,
+  Pressable,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
@@ -1229,6 +1230,72 @@ useEffect(() => {
             ))}
         </View>
 
+        <TouchableOpacity
+          style={styles.sellButton}
+          onPress={() => setShowSellForm(true)}
+        >
+          <Text style={styles.sellButtonText}>
+            + Sell something
+          </Text>
+        </TouchableOpacity>
+        {showSellForm && (
+  <View style={{ padding: 20 }}>
+    <Text>Sell an item</Text>
+    <TextInput
+  placeholder="What are you selling?"
+  style={styles.search}
+  value={itemTitle}
+  onChangeText={setItemTitle}
+/>
+<TextInput
+  placeholder="Price"
+  style={styles.search}
+  value={itemPrice}
+  onChangeText={setItemPrice}
+/>
+<TextInput
+  placeholder="Description / condition"
+  style={styles.search}
+  value={itemDescription}
+  onChangeText={setItemDescription}
+/>
+<Text>Category: {itemCategory}</Text>
+<TouchableOpacity onPress={() => setItemCategory("Furniture")}>
+<Text>Furniture</Text>
+</TouchableOpacity>
+<TouchableOpacity onPress={() => setItemCategory("Electronics")}>
+<Text>Electronics</Text>
+</TouchableOpacity>
+<TouchableOpacity onPress={() => setItemCategory("Clothing")}>
+<Text>Clothing</Text>
+</TouchableOpacity>
+<Text>Status: {listingStatus}</Text>
+{(["Available", "Pending"] as const).map((status) => (
+  <TouchableOpacity key={status} onPress={() => setListingStatus(status)}>
+    <Text>{status}</Text>
+  </TouchableOpacity>
+))}
+<TouchableOpacity style={styles.imagePicker} onPress={() => void chooseImages()}>
+  <Text style={styles.chatButtonText}>{itemFiles.length ? `${itemFiles.length} image(s) selected` : "Add listing images"}</Text>
+</TouchableOpacity>
+{publishError ? <Text style={styles.authError}>{publishError}</Text> : null}
+<TouchableOpacity
+  style={[styles.sellButton, publishLoading && styles.disabledButton]}
+  disabled={publishLoading}
+  onPress={() => void publishListing()}
+>
+  <Text style={styles.sellButtonText}>
+    {publishLoading ? "Publishing..." : "Publish listing"}
+  </Text>
+</TouchableOpacity>
+  </View>
+)}
+
+        <Text style={styles.footer}>
+          UC Market • Made for students
+        </Text>
+      </ScrollView>
+
         <Modal
           visible={selectedListing !== null}
           animationType="slide"
@@ -1296,7 +1363,7 @@ useEffect(() => {
 
                 {selectedListing.seller_id !== authUser?.id ? (
                   <>
-                    <TouchableOpacity
+                    <Pressable
                       style={styles.buyButton}
                       disabled={purchaseLoading || (selectedListing.status ?? "Available") !== "Available" || purchaseRequestIds.has(String(selectedListing.id))}
                       onPress={() => void requestPurchase(selectedListing)}
@@ -1310,7 +1377,7 @@ useEffect(() => {
                               ? "Sending request..."
                               : "Buy"}
                       </Text>
-                    </TouchableOpacity>
+                    </Pressable>
                     <Text style={styles.contactHint}>
                       {selectedListing.status === "Sold"
                         ? "This listing is no longer available."
@@ -1318,13 +1385,13 @@ useEffect(() => {
                           ? "Your purchase request is pending seller review."
                           : "Send a purchase request to the seller. No payment has been processed."}
                     </Text>
-                    <TouchableOpacity
+                    <Pressable
                       style={styles.chatButton}
                       disabled={chatLoading || selectedListing.status === "Sold"}
                       onPress={() => void openConversation(selectedListing)}
                     >
                       <Text style={styles.chatButtonText}>Chat with Seller</Text>
-                    </TouchableOpacity>
+                    </Pressable>
                     <TouchableOpacity style={styles.favoriteDetail} disabled={favoriteLoadingIds.has(String(selectedListing.id))} onPress={() => void toggleFavorite(selectedListing)}>
                       <Text style={styles.chatButtonText}>{favoriteLoadingIds.has(String(selectedListing.id)) ? "Saving..." : favorites.has(String(selectedListing.id)) ? "♥ Saved" : "♡ Save favorite"}</Text>
                     </TouchableOpacity>
@@ -1545,71 +1612,6 @@ useEffect(() => {
           </SafeAreaView>
         </Modal>
 
-        <TouchableOpacity
-          style={styles.sellButton}
-          onPress={() => setShowSellForm(true)}
-        >
-          <Text style={styles.sellButtonText}>
-            + Sell something
-          </Text>
-        </TouchableOpacity>
-        {showSellForm && (
-  <View style={{ padding: 20 }}>
-    <Text>Sell an item</Text>
-    <TextInput
-  placeholder="What are you selling?"
-  style={styles.search}
-  value={itemTitle}
-  onChangeText={setItemTitle}
-/>
-<TextInput
-  placeholder="Price"
-  style={styles.search}
-  value={itemPrice}
-  onChangeText={setItemPrice}
-/>
-<TextInput
-  placeholder="Description / condition"
-  style={styles.search}
-  value={itemDescription}
-  onChangeText={setItemDescription}
-/>
-<Text>Category: {itemCategory}</Text>
-<TouchableOpacity onPress={() => setItemCategory("Furniture")}>
-<Text>Furniture</Text>
-</TouchableOpacity>
-<TouchableOpacity onPress={() => setItemCategory("Electronics")}>
-<Text>Electronics</Text>
-</TouchableOpacity>
-<TouchableOpacity onPress={() => setItemCategory("Clothing")}>
-<Text>Clothing</Text>
-</TouchableOpacity>
-<Text>Status: {listingStatus}</Text>
-{(["Available", "Pending"] as const).map((status) => (
-  <TouchableOpacity key={status} onPress={() => setListingStatus(status)}>
-    <Text>{status}</Text>
-  </TouchableOpacity>
-))}
-<TouchableOpacity style={styles.imagePicker} onPress={() => void chooseImages()}>
-  <Text style={styles.chatButtonText}>{itemFiles.length ? `${itemFiles.length} image(s) selected` : "Add listing images"}</Text>
-</TouchableOpacity>
-{publishError ? <Text style={styles.authError}>{publishError}</Text> : null}
-<TouchableOpacity
-  style={[styles.sellButton, publishLoading && styles.disabledButton]}
-  disabled={publishLoading}
-  onPress={() => void publishListing()}
->
-  <Text style={styles.sellButtonText}>
-    {publishLoading ? "Publishing..." : "Publish listing"}
-  </Text>
-</TouchableOpacity>
-  </View>
-)}
-
-        <Text style={styles.footer}>
-          UC Market • Made for students
-        </Text>
-      </ScrollView>
     </SafeAreaView>
   );
 }
