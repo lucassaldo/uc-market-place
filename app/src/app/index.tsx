@@ -664,7 +664,8 @@ useEffect(() => {
   };
 
   const openMyMarket = async () => {
-    if (!authUser) return;
+    const currentUser = authUser ?? (await supabase.auth.getUser()).data.user;
+    if (!currentUser) return;
     setMyMarketLoading(true);
     setMyMarketError("");
     setShowMyMarket(true);
@@ -672,17 +673,17 @@ useEffect(() => {
       const { data, error } = await supabase
         .from("purchases")
         .select("*, listing:listings(*)")
-        .or(`buyer_id.eq.${authUser.id},seller_id.eq.${authUser.id}`)
+        .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
         .order("created_at", { ascending: false });
       if (error) throw error;
       const records = (data ?? []) as Purchase[];
-      setPurchases(records.filter((purchase) => purchase.buyer_id === authUser.id));
-      setIncomingPurchases(records.filter((purchase) => purchase.seller_id === authUser.id));
+      setPurchases(records.filter((purchase) => purchase.buyer_id === currentUser.id));
+      setIncomingPurchases(records.filter((purchase) => purchase.seller_id === currentUser.id));
 
       const { data: conversationData, error: conversationError } = await supabase
         .from("conversations")
         .select("*, listing:listings(*)")
-        .or(`buyer_id.eq.${authUser.id},seller_id.eq.${authUser.id}`)
+        .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
         .order("created_at", { ascending: false });
       if (conversationError) throw conversationError;
 
@@ -764,12 +765,12 @@ useEffect(() => {
     }
   };
 
-  const openConversation = async (listing: Listing) => {
+  const openConversation = async (listing: Listing, existingConversation?: Conversation) => {
     if (!authUser) {
       Alert.alert("Sign in required", "Sign in to contact a seller.");
       return;
     }
-    if (!listing.seller_id || listing.seller_id === authUser.id) {
+    if (!listing.seller_id || (listing.seller_id === authUser.id && !existingConversation)) {
       Alert.alert(
         listing.seller_id ? "This is your listing" : "Seller unavailable",
         listing.seller_id ? "You cannot message yourself." : "This listing has no authenticated seller.",
@@ -788,16 +789,18 @@ useEffect(() => {
         buyer_id: authUser.id,
         seller_id: listing.seller_id,
       };
-      const { data: existingConversation, error: findError } = await supabase
-        .from("conversations")
-        .select("id,listing_id,buyer_id,seller_id,created_at")
-        .eq("listing_id", listingId)
-        .eq("buyer_id", authUser.id)
-        .eq("seller_id", listing.seller_id)
-        .maybeSingle();
-      if (findError) throw findError;
-
-      let conversationRecord = existingConversation as Conversation | null;
+      let conversationRecord = existingConversation ?? null;
+      if (!conversationRecord) {
+        const { data: buyerConversation, error: findError } = await supabase
+          .from("conversations")
+          .select("id,listing_id,buyer_id,seller_id,created_at")
+          .eq("listing_id", listingId)
+          .eq("buyer_id", authUser.id)
+          .eq("seller_id", listing.seller_id)
+          .maybeSingle();
+        if (findError) throw findError;
+        conversationRecord = buyerConversation as Conversation | null;
+      }
       if (!conversationRecord) {
         const { data: createdConversation, error: createError } = await supabase
           .from("conversations")
@@ -1057,9 +1060,15 @@ useEffect(() => {
           <TouchableOpacity onPress={() => setShowConversations(true)}>
             <Text style={styles.logout}>Messages</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => void openMyMarket()}>
-            <Text style={styles.logout}>My Market</Text>
-          </TouchableOpacity>
+         <Pressable
+  onPress={() => {
+    setMyMarketError("");
+    setShowMyMarket(true);
+    void openMyMarket();
+  }}
+>
+  <Text style={styles.logout}>My Market</Text>
+</Pressable>
         </View>
 
         <View style={styles.profileBar}>
@@ -1544,7 +1553,7 @@ useEffect(() => {
 
               <Text style={styles.myMarketSection}>Messages</Text>
               {marketConversations.length ? marketConversations.map((item) => (
-                <TouchableOpacity key={item.id} style={styles.myMarketRow} onPress={() => { setShowMyMarket(false); if (item.listing) void openConversation(item.listing); else Alert.alert("Conversation unavailable", "The related listing is no longer available."); }}>
+                <TouchableOpacity key={item.id} style={styles.myMarketRow} onPress={() => { setShowMyMarket(false); if (item.listing) void openConversation(item.listing, item); else Alert.alert("Conversation unavailable", "The related listing is no longer available."); }}>
                   <View style={styles.myMarketRowContent}>
                     <Text style={styles.cardTitle}>{item.listing?.title || `Listing #${item.listing_id}`}</Text>
                     <Text style={styles.seller}>{item.buyer_id === authUser?.id ? `Seller: ${sellerName(item.listing || { title: "", category: "", price: "" })}` : "Buyer conversation"}</Text>
@@ -1603,7 +1612,7 @@ useEffect(() => {
             </View>
             <ScrollView contentContainerStyle={styles.messages}>
               {!conversations.length ? <Text style={styles.contactHint}>No conversations yet.</Text> : conversations.map((item) => (
-                <TouchableOpacity key={item.id} style={styles.conversationRow} onPress={() => { setShowConversations(false); if (item.listing) void openConversation(item.listing); }}>
+                <TouchableOpacity key={item.id} style={styles.conversationRow} onPress={() => { setShowConversations(false); if (item.listing) void openConversation(item.listing, item); }}>
                   <Text style={styles.cardTitle}>{item.listing?.title || `Listing #${item.listing_id}`}</Text>
                   <Text style={styles.seller}>{item.buyer_id === authUser?.id ? "Buyer conversation" : "Seller conversation"}</Text>
                 </TouchableOpacity>
