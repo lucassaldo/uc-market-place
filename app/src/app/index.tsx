@@ -319,7 +319,38 @@ useEffect(() => {
     });
 }, [authUser, conversation]);
 
-  const toggleFavorite = async (listing: Listing) => {
+    useEffect(() => {
+    if (!authUser || !conversation) return;
+
+    const channel = supabase
+      .channel(`conversation-messages:${conversation.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${conversation.id}`,
+        },
+        (payload) => {
+          const newMessage = payload.new as Message;
+
+          setMessages((current) => {
+            if (current.some((message) => message.id === newMessage.id)) {
+              return current;
+            }
+
+            return [...current, newMessage];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [authUser, conversation]);
+const toggleFavorite = async (listing: Listing) => {
     if (!authUser || listing.id == null) {
       Alert.alert("Sign in required", "Sign in to save favorites.");
       return;
