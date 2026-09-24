@@ -14,6 +14,7 @@ Image,
   Modal,
   ActivityIndicator,
   useWindowDimensions,
+  Linking,
 } from "react-native";
 import { createClient, User } from "@supabase/supabase-js";
 import * as ImagePicker from "expo-image-picker";
@@ -386,6 +387,41 @@ const toggleFavorite = async (listing: Listing) => {
         next.delete(key);
         return next;
       });
+    }
+  };
+
+
+  const payForPurchase = async (purchase: any) => {
+    if (!authUser) return;
+
+    try {
+      setPurchaseActionLoading(purchase.id);
+
+      const { data, error } = await supabase.functions.invoke(
+        "create-checkout-session",
+        {
+          body: { purchaseId: purchase.id },
+        },
+      );
+
+      if (error) throw error;
+
+      if (!data?.url) {
+        throw new Error(
+          data?.error || "Checkout URL was not returned.",
+        );
+      }
+
+      await Linking.openURL(data.url);
+    } catch (error) {
+      Alert.alert(
+        "Payment failed",
+        error instanceof Error
+          ? error.message
+          : "Unable to start payment.",
+      );
+    } finally {
+      setPurchaseActionLoading(null);
     }
   };
 
@@ -1525,6 +1561,54 @@ const toggleFavorite = async (listing: Listing) => {
               {myMarketLoading ? <ActivityIndicator color="#7A1530" /> : null}
               {myMarketError ? <Text style={styles.myMarketError}>{myMarketError}</Text> : null}
 
+              
+              <TouchableOpacity
+                style={{
+                  backgroundColor: "#7A1530",
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 12,
+                  marginBottom: 12,
+                }}
+                onPress={async () => {
+                  try {
+                    const { data, error } =
+                      await supabase.functions.invoke(
+                        "create-connect-account",
+                        { body: {} },
+                      );
+
+                    if (error) throw error;
+
+                    if (!data?.onboardingUrl) {
+                      throw new Error(
+                        data?.error ||
+                          "Stripe onboarding link was not returned.",
+                      );
+                    }
+
+                    await Linking.openURL(data.onboardingUrl);
+                  } catch (error) {
+                    Alert.alert(
+                      "Stripe setup failed",
+                      error instanceof Error
+                        ? error.message
+                        : "Unable to connect Stripe.",
+                    );
+                  }
+                }}
+              >
+                <Text
+                  style={{
+                    color: "#FFFFFF",
+                    textAlign: "center",
+                    fontWeight: "800",
+                  }}
+                >
+                  Set up Stripe payments
+                </Text>
+              </TouchableOpacity>
+
               <Text style={styles.myMarketSection}>My Listings</Text>
               {listings.filter((listing) => listing.seller_id === authUser?.id).map((listing) => (
                 <View key={String(listing.id)} style={styles.myMarketRow}>
@@ -1564,6 +1648,31 @@ const toggleFavorite = async (listing: Listing) => {
                   <View style={styles.myMarketRowContent}>
                     <Text style={styles.cardTitle}>{purchase.listing?.title || `Listing #${purchase.listing_id}`}</Text>
                     <Text style={styles.seller}>{purchase.listing ? sellerName(purchase.listing) : "Seller unavailable"} · {purchase.price} · {purchase.status}</Text>
+                    {purchase.status === "accepted" ? (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: "#7A1530",
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          borderRadius: 10,
+                          marginTop: 8,
+                          alignSelf: "flex-start",
+                        }}
+                        disabled={purchaseActionLoading === purchase.id}
+                        onPress={() => void payForPurchase(purchase)}
+                      >
+                        <Text
+                          style={{
+                            color: "#FFFFFF",
+                            fontWeight: "800",
+                          }}
+                        >
+                          {purchaseActionLoading === purchase.id
+                            ? "Opening..."
+                            : "Pay now"}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                 </TouchableOpacity>
               )) : <Text style={styles.contactHint}>No purchase requests yet.</Text>}
