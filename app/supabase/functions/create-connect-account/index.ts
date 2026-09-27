@@ -54,10 +54,37 @@ async function stripePost(
   return data;
 }
 
+async function stripePostV2(
+  path: string,
+  secretKey: string,
+  body: Record<string, unknown>,
+) {
+  const response = await fetch(`https://api.stripe.com${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Content-Type": "application/json",
+      "Stripe-Version": "2026-08-26.preview",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data?.error?.message || `Stripe error ${response.status}`,
+    );
+  }
+
+  return data;
+}
+
 async function stripeGet(path: string, secretKey: string) {
   const response = await fetch(`https://api.stripe.com${path}`, {
     headers: {
       Authorization: `Bearer ${secretKey}`,
+      "Stripe-Version": "2026-08-26.preview",
     },
   });
 
@@ -183,30 +210,54 @@ Deno.serve(async (req) => {
 
     // Create Express Connect account when needed.
     if (!accountId) {
-      const accountParams = new URLSearchParams();
+      const accountBody: Record<string, unknown> = {
+      dashboard: "express",
+      identity: {
+        country: "us",
+      },
+      configuration: {
+        merchant: {
+          capabilities: {
+            card_payments: {
+              requested: true,
+            },
+          },
+        },
+        recipient: {
+          capabilities: {
+            stripe_balance: {
+              stripe_transfers: {
+                requested: true,
+              },
+            },
+          },
+        },
+      },
+      defaults: {
+        currency: "usd",
+        responsibilities: {
+          fees_collector: "application",
+          losses_collector: "application",
+        },
+      },
+      include: [
+        "configuration.merchant",
+        "configuration.recipient",
+        "requirements",
+      ],
+    };
 
-      accountParams.set("type", "express");
+    if (user.email) {
+      accountBody.contact_email = user.email;
+    }
 
-      if (user.email) {
-        accountParams.set("email", user.email);
-      }
+    const account = await stripePostV2(
+      "/v2/core/accounts",
+      stripeSecretKey,
+      accountBody,
+    );
 
-      accountParams.set(
-        "capabilities[card_payments][requested]",
-        "true",
-      );
-      accountParams.set(
-        "capabilities[transfers][requested]",
-        "true",
-      );
-
-      const account = await stripePost(
-        "/v1/accounts",
-        stripeSecretKey,
-        accountParams,
-      );
-
-      accountId = account.id;
+    accountId = account.id;
 
       const updateResponse = await fetch(
         `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(
@@ -238,13 +289,48 @@ Deno.serve(async (req) => {
       stripeSecretKey,
     );
 
-    if (account.charges_enabled && account.payouts_enabled) {
-      return json({
-        connected: true,
-        accountId,
-      });
-    }
+    console.log("STRIPE_STATUS", {
+    accountId,
+    charges_enabled: account.charges_enabled,
+    payouts_enabled: account.payouts_enabled,
+    details_submitted: account.details_submitted,
+    requirements: account.requirements,
+  });
 
+  console.log("STRIPE_DUE", JSON.stringify({
+    charges_enabled: account.charges_enabled,
+    payouts_enabled: account.payouts_enabled,
+    details_submitted: account.details_submitted,
+    currently_due: account.requirements?.currently_due,
+    past_due: account.requirements?.past_due,
+    pending_verification: account.requirements?.pending_verification,
+    disabled_reason: account.requirements?.disabled_reason,
+  }));
+
+  const accountV2 = await stripeGet(
+    `/v2/core/accounts/${encodeURIComponent(accountId)}?include=configuration.merchant&include=requirements`,
+    stripeSecretKey,
+  );
+
+  const cardPaymentsStatus =
+    accountV2?.configuration?.merchant?.capabilities?.card_payments?.status;
+
+  const payoutsStatus =
+    accountV2?.configuration?.merchant?.capabilities?.stripe_balance?.payouts?.status;
+
+  console.log("V2_CAPABILITY_STATUS", {
+    accountId,
+    cardPaymentsStatus,
+    payoutsStatus,
+  });
+  console.log("V2_REQUIREMENTS", JSON.stringify(accountV2?.requirements?.entries ?? [], null, 2));
+
+  if (cardPaymentsStatus === "active" && payoutsStatus === "active") {
+    return json({
+      connected: true,
+      accountId,
+    });
+  }
     const appUrl = Deno.env.get("APP_URL");
 
     if (!appUrl) {
