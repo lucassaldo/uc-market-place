@@ -1579,6 +1579,13 @@ const toggleFavorite = async (listing: Listing) => {
                       );
 
                     if (error) throw error;
+                    if (data?.connected) {
+  Alert.alert(
+    "Stripe connected",
+    "Your Stripe payments account is already connected and ready to receive payments."
+  );
+  return;
+}
 
                     if (!data?.onboardingUrl) {
                       throw new Error(
