@@ -218,6 +218,7 @@ const [listings, setListings] = useState<Listing[]>([]);
  const [incomingPurchases, setIncomingPurchases] = useState<Purchase[]>([]);
  const [showMyMarket, setShowMyMarket] = useState(false);
  const [myMarketLoading, setMyMarketLoading] = useState(false);
+ const [stripeConnected, setStripeConnected] = useState(false);
  const [myMarketError, setMyMarketError] = useState("");
  const [marketConversations, setMarketConversations] = useState<ConversationPreview[]>([]);
  const [purchaseActionLoading, setPurchaseActionLoading] = useState<string | null>(null);
@@ -1580,6 +1581,7 @@ const toggleFavorite = async (listing: Listing) => {
 
                     if (error) throw error;
                     if (data?.connected) {
+                      setStripeConnected(true);
   Alert.alert(
     "Stripe connected",
     "Your Stripe payments account is already connected and ready to receive payments."
@@ -1612,7 +1614,7 @@ const toggleFavorite = async (listing: Listing) => {
                     fontWeight: "800",
                   }}
                 >
-                  Set up Stripe payments
+                  {stripeConnected ? "Stripe payments connected ✓" : "Set up Stripe payments"}
                 </Text>
               </TouchableOpacity>
 
