@@ -191,6 +191,12 @@ const [listings, setListings] = useState<Listing[]>([]);
  const [category, setCategory] = useState("All");
  const [availability, setAvailability] = useState("All");
  const [sortOrder, setSortOrder] = useState("newest");
+ const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+const [showFilterMenu, setShowFilterMenu] = useState(false);
+const [marketSection, setMarketSection] = useState<
+  "chat" | "favorites" | "purchases" | "sales" | "messages"
+>("favorites");
+
  const [loadingListings, setLoadingListings] = useState(false);
  const [listingError, setListingError] = useState("");
  const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
@@ -1128,15 +1134,7 @@ const toggleFavorite = async (listing: Listing) => {
           <TouchableOpacity onPress={() => setShowConversations(true)}>
             <Text style={styles.logout}>Messages</Text>
           </TouchableOpacity>
-         <Pressable
-  onPress={() => {
-    setMyMarketError("");
-    setShowMyMarket(true);
-    void openMyMarket();
-  }}
->
-  <Text style={styles.logout}>My Market</Text>
-</Pressable>
+         
         </View>
 
         <View style={styles.profileBar}>
@@ -1154,7 +1152,7 @@ const toggleFavorite = async (listing: Listing) => {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.hero}>
+        <View style={[styles.hero, { display: "none" }]}>
           <View style={[styles.heroVisual, isMobileHero && styles.mobileHeroVisual]}>
             <View style={styles.heroSky} />
             <View style={styles.heroHorizon} />
@@ -1206,49 +1204,136 @@ const toggleFavorite = async (listing: Listing) => {
           />
         </View>
 
-        <Text style={styles.sectionTitle}>Categories</Text>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryRow}
+        <View style={{ gap: 8, marginBottom: 12 }}>
+  <TouchableOpacity
+    style={styles.filterOption}
+    onPress={() => setShowCategoryMenu(!showCategoryMenu)}
+  >
+    <Text style={styles.filterOptionText}>
+      Category: {category} ▾
+    </Text>
+  </TouchableOpacity>
+
+  {showCategoryMenu && (
+    <View style={{ gap: 6 }}>
+      {categories.map((categoryName) => (
+        <TouchableOpacity
+          key={categoryName}
+          style={[
+            styles.filterOption,
+            category === categoryName && styles.filterOptionActive,
+          ]}
+          onPress={() => {
+            setCategory(categoryName);
+            setShowCategoryMenu(false);
+          }}
         >
-          {categories.map((categoryName) => (
-            <TouchableOpacity
-              key={categoryName}
-              onPress={() => setCategory(categoryName)}
-              style={[
-                styles.category,
-                categoryName === category && styles.categoryActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.categoryText,
-                  categoryName === category && styles.categoryTextActive,
-                ]}
-              >
-                {categoryName}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+          <Text
+            style={
+              category === categoryName
+                ? styles.filterOptionTextActive
+                : styles.filterOptionText
+            }
+          >
+            {categoryName}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  )}
 
-        <Text style={styles.sectionTitle}>Latest listings</Text>
+  <TouchableOpacity
+    style={styles.filterOption}
+    onPress={() => setShowFilterMenu(!showFilterMenu)}
+  >
+    <Text style={styles.filterOptionText}>
+      Filter & Sort: {availability} · {
+        sortOrder === "newest"
+          ? "Newest"
+          : sortOrder === "lowPrice"
+          ? "Price Low"
+          : "Price High"
+      } ▾
+    </Text>
+  </TouchableOpacity>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-          {["All", "Available", "Pending", "Sold"].map((option) => (
-            <TouchableOpacity key={option} style={[styles.filterOption, availability === option && styles.filterOptionActive]} onPress={() => setAvailability(option)}>
-              <Text style={availability === option ? styles.filterOptionTextActive : styles.filterOptionText}>{option}</Text>
-            </TouchableOpacity>
-          ))}
-          {[{ key: "newest", label: "Newest" }, { key: "lowPrice", label: "Price low" }, { key: "highPrice", label: "Price high" }].map((option) => (
-            <TouchableOpacity key={option.key} style={[styles.filterOption, sortOrder === option.key && styles.filterOptionActive]} onPress={() => setSortOrder(option.key)}>
-              <Text style={sortOrder === option.key ? styles.filterOptionTextActive : styles.filterOptionText}>{option.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+  {showFilterMenu && (
+    <View style={{ gap: 6 }}>
+      {["All", "Available", "Pending", "Sold"].map((option) => (
+        <TouchableOpacity
+          key={option}
+          style={styles.filterOption}
+          onPress={() => {
+            setAvailability(option);
+            setShowFilterMenu(false);
+          }}
+        >
+          <Text style={styles.filterOptionText}>{option}</Text>
+        </TouchableOpacity>
+      ))}
 
+      {[
+        { key: "newest", label: "Newest" },
+        { key: "lowPrice", label: "Price Low" },
+        { key: "highPrice", label: "Price High" },
+      ].map((option) => (
+        <TouchableOpacity
+          key={option.key}
+          style={styles.filterOption}
+          onPress={() => {
+            setSortOrder(option.key);
+            setShowFilterMenu(false);
+          }}
+        >
+          <Text style={styles.filterOptionText}>{option.label}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  )}
+</View>
+<ScrollView
+  horizontal
+  showsHorizontalScrollIndicator={false}
+  contentContainerStyle={{ gap: 10, paddingVertical: 12 }}
+>
+  {[
+    { key: "sell", label: "Sell Something" },
+    { key: "favorites", label: "Favorites" },
+    { key: "purchases", label: "My Purchases" },
+    { key: "sales", label: "Sales Requests" },
+    { key: "messages", label: "Messages" },
+  ].map((item) => (
+    <TouchableOpacity
+      key={item.key}
+      style={[
+        styles.filterOption,
+        marketSection === item.key && styles.filterOptionActive,
+        { paddingHorizontal: 18, paddingVertical: 12 }
+      ]}
+      onPress={() => {
+        if (item.key === "sell") {
+          setShowSellForm(true);
+          return;
+        }
+
+        setMarketSection(item.key as typeof marketSection);
+        setShowMyMarket(true);
+        void openMyMarket();
+      }}
+    >
+      <Text
+        style={
+          marketSection === item.key
+            ? styles.filterOptionTextActive
+            : styles.filterOptionText
+        }
+      >
+        {item.label}
+      </Text>
+    </TouchableOpacity>
+  ))}
+</ScrollView>
         <View style={styles.list}>
           {loadingListings ? <ActivityIndicator color="#7A1530" /> : null}
           {listingError ? <Text style={styles.authError}>{listingError}</Text> : null}
@@ -1307,66 +1392,7 @@ const toggleFavorite = async (listing: Listing) => {
             ))}
         </View>
 
-        <TouchableOpacity
-          style={styles.sellButton}
-          onPress={() => setShowSellForm(true)}
-        >
-          <Text style={styles.sellButtonText}>
-            + Sell something
-          </Text>
-        </TouchableOpacity>
-        {showSellForm && (
-  <View style={{ padding: 20 }}>
-    <Text>Sell an item</Text>
-    <TextInput
-  placeholder="What are you selling?"
-  style={styles.search}
-  value={itemTitle}
-  onChangeText={setItemTitle}
-/>
-<TextInput
-  placeholder="Price"
-  style={styles.search}
-  value={itemPrice}
-  onChangeText={setItemPrice}
-/>
-<TextInput
-  placeholder="Description / condition"
-  style={styles.search}
-  value={itemDescription}
-  onChangeText={setItemDescription}
-/>
-<Text>Category: {itemCategory}</Text>
-<TouchableOpacity onPress={() => setItemCategory("Furniture")}>
-<Text>Furniture</Text>
-</TouchableOpacity>
-<TouchableOpacity onPress={() => setItemCategory("Electronics")}>
-<Text>Electronics</Text>
-</TouchableOpacity>
-<TouchableOpacity onPress={() => setItemCategory("Clothing")}>
-<Text>Clothing</Text>
-</TouchableOpacity>
-<Text>Status: {listingStatus}</Text>
-{(["Available", "Pending"] as const).map((status) => (
-  <TouchableOpacity key={status} onPress={() => setListingStatus(status)}>
-    <Text>{status}</Text>
-  </TouchableOpacity>
-))}
-<TouchableOpacity style={styles.imagePicker} onPress={() => void chooseImages()}>
-  <Text style={styles.chatButtonText}>{itemFiles.length ? `${itemFiles.length} image(s) selected` : "Add listing images"}</Text>
-</TouchableOpacity>
-{publishError ? <Text style={styles.authError}>{publishError}</Text> : null}
-<TouchableOpacity
-  style={[styles.sellButton, publishLoading && styles.disabledButton]}
-  disabled={publishLoading}
-  onPress={() => void publishListing()}
->
-  <Text style={styles.sellButtonText}>
-    {publishLoading ? "Publishing..." : "Publish listing"}
-  </Text>
-</TouchableOpacity>
-  </View>
-)}
+        
 
         <Text style={styles.footer}>
           UC Market • Made for students
@@ -1552,11 +1578,78 @@ const toggleFavorite = async (listing: Listing) => {
           </View>
         </Modal>
 
-        <Modal visible={showMyMarket} animationType="slide" onRequestClose={() => setShowMyMarket(false)}>
+        
+      <Modal
+        visible={showSellForm}
+        animationType="slide"
+        onRequestClose={() => setShowSellForm(false)}
+      >
+        <SafeAreaView style={styles.detailContainer}>
+          <ScrollView contentContainerStyle={{ padding: 20 }}>
+            <TouchableOpacity onPress={() => setShowSellForm(false)}>
+              <Text style={styles.closeButtonText}>Close</Text>
+            </TouchableOpacity>
+
+            <View style={{ padding: 20 }}>
+    <Text>Sell an item</Text>
+    <TextInput
+  placeholder="What are you selling?"
+  style={styles.search}
+  value={itemTitle}
+  onChangeText={setItemTitle}
+/>
+<TextInput
+  placeholder="Price"
+  style={styles.search}
+  value={itemPrice}
+  onChangeText={setItemPrice}
+/>
+<TextInput
+  placeholder="Description / condition"
+  style={styles.search}
+  value={itemDescription}
+  onChangeText={setItemDescription}
+/>
+<Text>Category: {itemCategory}</Text>
+<TouchableOpacity onPress={() => setItemCategory("Furniture")}>
+<Text>Furniture</Text>
+</TouchableOpacity>
+<TouchableOpacity onPress={() => setItemCategory("Electronics")}>
+<Text>Electronics</Text>
+</TouchableOpacity>
+<TouchableOpacity onPress={() => setItemCategory("Clothing")}>
+<Text>Clothing</Text>
+</TouchableOpacity>
+<Text>Status: {listingStatus}</Text>
+{(["Available", "Pending"] as const).map((status) => (
+  <TouchableOpacity key={status} onPress={() => setListingStatus(status)}>
+    <Text>{status}</Text>
+  </TouchableOpacity>
+))}
+<TouchableOpacity style={styles.imagePicker} onPress={() => void chooseImages()}>
+  <Text style={styles.chatButtonText}>{itemFiles.length ? `${itemFiles.length} image(s) selected` : "Add listing images"}</Text>
+</TouchableOpacity>
+{publishError ? <Text style={styles.authError}>{publishError}</Text> : null}
+<TouchableOpacity
+  style={[styles.sellButton, publishLoading && styles.disabledButton]}
+  disabled={publishLoading}
+  onPress={() => void publishListing()}
+>
+  <Text style={styles.sellButtonText}>
+    {publishLoading ? "Publishing..." : "Publish listing"}
+  </Text>
+</TouchableOpacity>
+  </View>
+
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+<Modal visible={showMyMarket} animationType="slide" onRequestClose={() => setShowMyMarket(false)}>
           <SafeAreaView style={styles.detailContainer}>
             <View style={styles.chatHeader}>
               <TouchableOpacity onPress={() => setShowMyMarket(false)}><Text style={styles.closeButtonText}>Close</Text></TouchableOpacity>
-              <Text style={styles.formTitle}>My Market</Text>
+              
             </View>
             <ScrollView contentContainerStyle={styles.myMarketContent}>
               {myMarketLoading ? <ActivityIndicator color="#7A1530" /> : null}
@@ -1618,24 +1711,9 @@ const toggleFavorite = async (listing: Listing) => {
                 </Text>
               </TouchableOpacity>
 
-              <Text style={styles.myMarketSection}>My Listings</Text>
-              {listings.filter((listing) => listing.seller_id === authUser?.id).map((listing) => (
-                <View key={String(listing.id)} style={styles.myMarketRow}>
-                  {listingImageUrl(listing.image_url || listing.image) ? <Image source={{ uri: listingImageUrl(listing.image_url || listing.image)! }} style={styles.myMarketThumbnail} /> : <View style={styles.myMarketThumbnailPlaceholder}><Text>📦</Text></View>}
-                  <View style={styles.myMarketRowContent}>
-                    <Text style={styles.cardTitle}>{listing.title}</Text>
-                    <Text style={styles.seller}>{listing.price} · {listing.category} · {listing.status || "Available"}</Text>
-                    <View style={styles.myMarketActionRow}>
-                      <TouchableOpacity onPress={() => { setShowMyMarket(false); openListingDetails(listing); }}><Text style={styles.myMarketAction}>Open</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => { setSelectedListing(listing); setShowMyMarket(false); openEditListing(listing); }}><Text style={styles.myMarketAction}>Edit</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => { setSelectedListing(listing); setShowMyMarket(false); setDeleteTarget(listing); }}><Text style={styles.myMarketDeleteAction}>Delete</Text></TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              ))}
-              {!listings.some((listing) => listing.seller_id === authUser?.id) ? <Text style={styles.contactHint}>You haven't listed anything yet.</Text> : null}
-
-              <Text style={styles.myMarketSection}>Favorites</Text>
+              {marketSection === "favorites" && (
+  <>
+<Text style={styles.myMarketSection}>Favorites</Text>
               {listings.filter((listing) => favorites.has(String(listing.id))).map((listing) => (
                 <View key={String(listing.id)} style={styles.myMarketRow}>
                   {listingImageUrl(listing.image_url || listing.image) ? <Image source={{ uri: listingImageUrl(listing.image_url || listing.image)! }} style={styles.myMarketThumbnail} /> : <View style={styles.myMarketThumbnailPlaceholder}><Text>📦</Text></View>}
@@ -1651,7 +1729,13 @@ const toggleFavorite = async (listing: Listing) => {
               ))}
               {!listings.some((listing) => favorites.has(String(listing.id))) ? <Text style={styles.contactHint}>No favorites yet.</Text> : null}
 
-              <Text style={styles.myMarketSection}>My Purchases</Text>
+              
+  </>
+)}
+
+{marketSection === "purchases" && (
+  <>
+<Text style={styles.myMarketSection}>My Purchases</Text>
               {purchases.length ? purchases.map((purchase) => (
                 <TouchableOpacity key={purchase.id} style={styles.myMarketRow} onPress={() => { if (purchase.listing) { setShowMyMarket(false); openListingDetails(purchase.listing); } }}>
                   <View style={styles.myMarketRowContent}>
@@ -1686,7 +1770,13 @@ const toggleFavorite = async (listing: Listing) => {
                 </TouchableOpacity>
               )) : <Text style={styles.contactHint}>No purchase requests yet.</Text>}
 
-              <Text style={styles.myMarketSection}>Sales Requests</Text>
+              
+  </>
+)}
+
+{marketSection === "sales" && (
+  <>
+<Text style={styles.myMarketSection}>Sales Requests</Text>
               {incomingPurchases.length ? incomingPurchases.map((purchase) => (
                 <View key={purchase.id} style={styles.myMarketRow}>
                   <View style={styles.myMarketRowContent}>
@@ -1700,7 +1790,13 @@ const toggleFavorite = async (listing: Listing) => {
                 </View>
               )) : <Text style={styles.contactHint}>No incoming purchase requests.</Text>}
 
-              <Text style={styles.myMarketSection}>Messages</Text>
+              
+  </>
+)}
+
+{(marketSection === "messages" || marketSection === "chat") && (
+  <>
+<Text style={styles.myMarketSection}>Messages</Text>
               {marketConversations.length ? marketConversations.map((item) => (
                 <TouchableOpacity key={item.id} style={styles.myMarketRow} onPress={() => { setShowMyMarket(false); if (item.listing) void openConversation(item.listing, item); else Alert.alert("Conversation unavailable", "The related listing is no longer available."); }}>
                   <View style={styles.myMarketRowContent}>
@@ -1710,7 +1806,10 @@ const toggleFavorite = async (listing: Listing) => {
                   </View>
                 </TouchableOpacity>
               )) : <Text style={styles.contactHint}>No conversations yet.</Text>}
-            </ScrollView>
+            
+  </>
+)}
+</ScrollView>
           </SafeAreaView>
         </Modal>
 
