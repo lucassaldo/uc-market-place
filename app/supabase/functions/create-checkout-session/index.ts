@@ -221,10 +221,6 @@ Deno.serve(async (req) => {
       return json({ error: "Invalid listing price" }, 400);
     }
 
-    // UC Market commission: exactly 5%.
-    const applicationFeeAmount = Math.round(
-      priceInCents * 0.05,
-    );
 
     const appUrl = Deno.env.get("APP_URL");
 
@@ -256,14 +252,8 @@ Deno.serve(async (req) => {
       ),
     );
 
-    // 5% stays with UC Market; the remainder is transferred
-    // to the connected seller.
-    params.set(
-      "payment_intent_data[application_fee_amount]",
-      String(applicationFeeAmount),
-    );
-
-    params.set(
+    // No UC Market application fee; payment is transferred to the connected seller.
+params.set(
       "payment_intent_data[transfer_data][destination]",
       String(stripeAccountId),
     );
