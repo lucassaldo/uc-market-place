@@ -15,6 +15,7 @@ Image,
   ActivityIndicator,
   useWindowDimensions,
   Linking,
+  Platform,
 } from "react-native";
 import { createClient, User } from "@supabase/supabase-js";
 import * as ImagePicker from "expo-image-picker";
@@ -42,6 +43,7 @@ type Profile = {
   full_name: string | null;
   email: string | null;
   avatar_url: string | null;
+  role?: "student" | "staff" | "admin";
 };
 
 type Conversation = {
@@ -194,7 +196,7 @@ const [listings, setListings] = useState<Listing[]>([]);
  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
 const [showFilterMenu, setShowFilterMenu] = useState(false);
 const [marketSection, setMarketSection] = useState<
-  "chat" | "favorites" | "purchases" | "sales" | "messages"
+  "chat" | "favorites" | "purchases" | "sales" | "messages" | "staff"
 >("favorites");
 
  const [loadingListings, setLoadingListings] = useState(false);
@@ -244,7 +246,7 @@ useEffect(() => {
   const ensureProfileAndLoad = async () => {
     const { data: existingProfile, error: profileError } = await supabase
       .from("profiles")
-      .select("id,full_name,email,avatar_url")
+      .select("id,full_name,email,avatar_url,role")
       .eq("id", authUser.id)
       .maybeSingle();
     if (!profileError && !existingProfile) {
@@ -253,11 +255,12 @@ useEffect(() => {
         full_name: authUser.user_metadata.full_name || null,
         email: authUser.email || null,
         avatar_url: null,
+        role: "student",
       });
     }
     const { data: currentProfile } = await supabase
       .from("profiles")
-      .select("id,full_name,email,avatar_url")
+      .select("id,full_name,email,avatar_url,role")
       .eq("id", authUser.id)
       .maybeSingle();
     setProfile((currentProfile as Profile | null) ?? null);
@@ -546,7 +549,7 @@ const toggleFavorite = async (listing: Listing) => {
         .from("profiles")
         .update({ avatar_url: avatarUrl, updated_at: new Date().toISOString() })
         .eq("id", authUser.id)
-        .select("id,full_name,email,avatar_url")
+        .select("id,full_name,email,avatar_url,role")
         .single();
       if (profileError) throw profileError;
       setProfile(updatedProfile as Profile);
@@ -824,6 +827,7 @@ const toggleFavorite = async (listing: Listing) => {
           full_name: name.trim(),
           email: result.data.user.email ?? null,
           avatar_url: null,
+          role: "student",
         });
         if (error) {
           setAuthError(error.message);
@@ -1042,69 +1046,85 @@ const toggleFavorite = async (listing: Listing) => {
   if (!loggedIn) {
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.loginContainer}>
-          <Text style={styles.logo}>UC MARKET</Text>
+        <ScrollView contentContainerStyle={styles.loginContainer} keyboardShouldPersistTaps="handled">
+          <View style={[styles.loginLayout, width < 760 && styles.loginLayoutCompact]}>
+            <View style={[styles.loginImagePlaceholder, width < 760 && styles.loginImagePlaceholderCompact]}>
+              <View style={styles.loginArtSky} />
+              <View style={styles.loginArtSun} />
+              <View style={styles.loginArtBuildingBack} />
+              <View style={styles.loginArtBuildingFront}>
+                <View style={styles.loginArtWindowRow}><View style={styles.loginArtWindow} /><View style={styles.loginArtWindow} /><View style={styles.loginArtWindow} /></View>
+                <View style={styles.loginArtDoor} />
+              </View>
+              <View style={styles.loginArtGround} />
+              <View style={styles.loginArtMarket}>
+                <View style={styles.loginArtCanopy}><Text style={styles.loginArtCanopyText}>CAMPUS MARKET</Text></View>
+                <View style={styles.loginArtCounter}><View style={styles.loginArtBook} /><View style={styles.loginArtPlant} /><View style={styles.loginArtBox} /></View>
+              </View>
+              <View style={styles.loginArtCopy}>
+                <Text style={styles.loginArtEyebrow}>UC CAMPUS EXCHANGE</Text>
+                <Text style={styles.loginArtTitle}>Good finds.{"\n"}Close to home.</Text>
+              </View>
+            </View>
 
-          <Text style={styles.tagline}>
-            Buy. Sell. Connect.
-          </Text>
+            <View style={styles.loginForm}>
+              <Text style={styles.logo}>UC MARKET</Text>
+              <Text style={styles.tagline}>Buy. Sell. Connect.</Text>
+              <Text style={styles.title}>
+                {isSignUp ? "Create your account" : "Welcome back"}
+              </Text>
+              <Text style={styles.subtitle}>
+                {isSignUp
+                  ? "Join the student marketplace."
+                  : "Sign in to continue to UC Market."}
+              </Text>
 
-          <Text style={styles.title}>
-            {isSignUp ? "Create your account" : "Welcome back"}
-          </Text>
+              {isSignUp && (
+                <TextInput
+                  style={styles.input}
+                  placeholder="Full name"
+                  value={name}
+                  onChangeText={setName}
+                />
+              )}
 
-          <Text style={styles.subtitle}>
-            {isSignUp
-              ? "Join the student marketplace."
-              : "Sign in to continue to UC Market."}
-          </Text>
+              <TextInput
+                style={styles.input}
+                placeholder="University email"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={email}
+                onChangeText={setEmail}
+              />
 
-          {isSignUp && (
-            <TextInput
-              style={styles.input}
-              placeholder="Full name"
-              value={name}
-              onChangeText={setName}
-            />
-          )}
+              <TextInput
+                style={styles.input}
+                placeholder="Password"
+                secureTextEntry
+                value={password}
+                onChangeText={setPassword}
+              />
 
-          <TextInput
-            style={styles.input}
-            placeholder="University email"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            value={email}
-            onChangeText={setEmail}
-          />
+              <TouchableOpacity
+                style={[styles.primaryButton, authLoading && styles.disabledButton]}
+                disabled={authLoading}
+                onPress={() => void authenticate()}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {authLoading ? (isSignUp ? "Creating account..." : "Signing in...") : isSignUp ? "Create account" : "Sign in"}
+                </Text>
+              </TouchableOpacity>
+              {authError ? <Text style={styles.authError}>{authError}</Text> : null}
 
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
-
-          <TouchableOpacity
-            style={[styles.primaryButton, authLoading && styles.disabledButton]}
-            disabled={authLoading}
-            onPress={() => void authenticate()}
-          >
-            <Text style={styles.primaryButtonText}>
-              {authLoading ? (isSignUp ? "Creating account..." : "Signing in...") : isSignUp ? "Create account" : "Sign in"}
-            </Text>
-          </TouchableOpacity>
-          {authError ? <Text style={styles.authError}>{authError}</Text> : null}
-
-          <TouchableOpacity
-            onPress={() => setIsSignUp(!isSignUp)}
-          >
-            <Text style={styles.switchText}>
-              {isSignUp
-                ? "Already have an account? Sign in"
-                : "Don't have an account? Create one"}
-            </Text>
-          </TouchableOpacity>
+              <TouchableOpacity onPress={() => setIsSignUp(!isSignUp)}>
+                <Text style={styles.switchText}>
+                  {isSignUp
+                    ? "Already have an account? Sign in"
+                    : "Don't have an account? Create one"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -1131,9 +1151,11 @@ const toggleFavorite = async (listing: Listing) => {
           <TouchableOpacity onPress={() => void signOut()}>
             <Text style={styles.logout}>Log out</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowConversations(true)}>
-            <Text style={styles.logout}>Messages</Text>
-          </TouchableOpacity>
+          {Platform.OS !== "web" ? (
+            <TouchableOpacity onPress={() => setShowConversations(true)}>
+              <Text style={styles.logout}>Messages</Text>
+            </TouchableOpacity>
+          ) : null}
          
         </View>
 
@@ -1333,6 +1355,24 @@ const toggleFavorite = async (listing: Listing) => {
       </Text>
     </TouchableOpacity>
   ))}
+    {profile?.role === "staff" || profile?.role === "admin" ? (
+      <TouchableOpacity
+        style={[
+          styles.filterOption,
+          marketSection === "staff" && styles.filterOptionActive,
+          { paddingHorizontal: 18, paddingVertical: 12 },
+        ]}
+        onPress={() => {
+          setMarketSection("staff");
+          setShowMyMarket(true);
+          void openMyMarket();
+        }}
+      >
+        <Text style={marketSection === "staff" ? styles.filterOptionTextActive : styles.filterOptionText}>
+          {profile.role === "admin" ? "Admin dashboard" : "Staff dashboard"}
+        </Text>
+      </TouchableOpacity>
+    ) : null}
 </ScrollView>
         <View style={styles.list}>
           {loadingListings ? <ActivityIndicator color="#7A1530" /> : null}
@@ -1649,11 +1689,18 @@ const toggleFavorite = async (listing: Listing) => {
           <SafeAreaView style={styles.detailContainer}>
             <View style={styles.chatHeader}>
               <TouchableOpacity onPress={() => setShowMyMarket(false)}><Text style={styles.closeButtonText}>Close</Text></TouchableOpacity>
-              
+              <Text style={styles.formTitle}>My Market</Text>
             </View>
             <ScrollView contentContainerStyle={styles.myMarketContent}>
               {myMarketLoading ? <ActivityIndicator color="#7A1530" /> : null}
               {myMarketError ? <Text style={styles.myMarketError}>{myMarketError}</Text> : null}
+
+              {profile?.role === "staff" || profile?.role === "admin" ? (
+                <View style={styles.roleSummary}>
+                  <Text style={styles.roleSummaryName}>{profile.full_name || profile.email || "UC Market user"}</Text>
+                  <Text style={styles.roleBadge}>{profile.role === "admin" ? "ADMIN" : "STAFF"}</Text>
+                </View>
+              ) : null}
 
               
               <TouchableOpacity
@@ -1809,6 +1856,34 @@ const toggleFavorite = async (listing: Listing) => {
             
   </>
 )}
+
+{marketSection === "staff" && (profile?.role === "staff" || profile?.role === "admin") && (
+  <View>
+    <Text style={styles.myMarketSection}>Marketplace snapshot</Text>
+    <View style={styles.dashboardStats}>
+      <View style={styles.dashboardStat}>
+        <Text style={styles.dashboardStatValue}>{listings.length}</Text>
+        <Text style={styles.dashboardStatLabel}>Visible listings</Text>
+      </View>
+      <View style={styles.dashboardStat}>
+        <Text style={styles.dashboardStatValue}>{listings.filter((listing) => (listing.status ?? "Available") === "Available").length}</Text>
+        <Text style={styles.dashboardStatLabel}>Available</Text>
+      </View>
+      <View style={styles.dashboardStat}>
+        <Text style={styles.dashboardStatValue}>{listings.filter((listing) => listing.status === "Pending").length}</Text>
+        <Text style={styles.dashboardStatLabel}>Pending</Text>
+      </View>
+      <View style={styles.dashboardStat}>
+        <Text style={styles.dashboardStatValue}>{listings.filter((listing) => listing.status === "Sold").length}</Text>
+        <Text style={styles.dashboardStatLabel}>Sold</Text>
+      </View>
+      <View style={styles.dashboardStat}>
+        <Text style={styles.dashboardStatValue}>{purchases.length + incomingPurchases.length}</Text>
+        <Text style={styles.dashboardStatLabel}>Your purchase requests</Text>
+      </View>
+    </View>
+  </View>
+)}
 </ScrollView>
           </SafeAreaView>
         </Modal>
@@ -1882,7 +1957,254 @@ const styles = StyleSheet.create({
   loginContainer: {
     flexGrow: 1,
     justifyContent: "center",
-    padding: 30,
+    paddingHorizontal: 20,
+    paddingVertical: 28,
+  },
+
+  loginLayout: {
+    width: "100%",
+    maxWidth: 1080,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 44,
+  },
+
+  loginLayoutCompact: {
+    flexDirection: "column",
+    gap: 24,
+  },
+
+  loginImagePlaceholder: {
+    width: "48%",
+    height: 440,
+    maxHeight: 600,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: "#193B49",
+    position: "relative",
+    justifyContent: "flex-end",
+  },
+
+  loginImagePlaceholderCompact: {
+    width: "100%",
+    height: 190,
+  },
+
+  loginArtSky: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "#B6D0C8",
+  },
+
+  loginArtSun: {
+    position: "absolute",
+    top: 30,
+    right: 40,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#E8B564",
+  },
+
+  loginArtBuildingBack: {
+    position: "absolute",
+    bottom: 88,
+    right: "9%",
+    width: "38%",
+    height: "42%",
+    backgroundColor: "#678A84",
+    borderTopLeftRadius: 42,
+    borderTopRightRadius: 42,
+    borderWidth: 8,
+    borderColor: "#E9E2CF",
+  },
+
+  loginArtBuildingFront: {
+    position: "absolute",
+    bottom: 88,
+    left: "9%",
+    width: "43%",
+    height: "35%",
+    backgroundColor: "#E8DDC3",
+    borderTopWidth: 10,
+    borderTopColor: "#A14C46",
+    justifyContent: "space-evenly",
+    alignItems: "center",
+  },
+
+  loginArtWindowRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  loginArtWindow: {
+    width: 16,
+    height: 22,
+    backgroundColor: "#547C83",
+    borderWidth: 3,
+    borderColor: "#F7F0DD",
+  },
+
+  loginArtDoor: {
+    position: "absolute",
+    bottom: 0,
+    width: 23,
+    height: 35,
+    backgroundColor: "#8C5346",
+  },
+
+  loginArtGround: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 96,
+    backgroundColor: "#315B50",
+  },
+
+  loginArtMarket: {
+    position: "absolute",
+    bottom: 36,
+    right: "8%",
+    width: "37%",
+    height: 82,
+  },
+
+  loginArtCanopy: {
+    height: 25,
+    backgroundColor: "#9E3542",
+    borderBottomWidth: 4,
+    borderBottomColor: "#F0D8C4",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  loginArtCanopyText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "800",
+  },
+
+  loginArtCounter: {
+    height: 48,
+    backgroundColor: "#F4E8D4",
+    borderBottomWidth: 7,
+    borderBottomColor: "#A97550",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-evenly",
+  },
+
+  loginArtBook: {
+    width: 15,
+    height: 24,
+    backgroundColor: "#547C83",
+    borderLeftWidth: 3,
+    borderLeftColor: "#D5A458",
+  },
+
+  loginArtPlant: {
+    width: 18,
+    height: 18,
+    borderRadius: 10,
+    backgroundColor: "#568264",
+    borderBottomWidth: 5,
+    borderBottomColor: "#9A684A",
+  },
+
+  loginArtBox: {
+    width: 20,
+    height: 18,
+    backgroundColor: "#D19B5A",
+    borderWidth: 2,
+    borderColor: "#F1D5A5",
+  },
+
+  loginArtCopy: {
+    position: "absolute",
+    top: 24,
+    left: 24,
+    right: 20,
+  },
+
+  loginArtEyebrow: {
+    color: "#315B50",
+    fontSize: 10,
+    fontWeight: "800",
+    marginBottom: 8,
+  },
+
+  loginArtTitle: {
+    color: "#193B49",
+    fontSize: 26,
+    fontWeight: "800",
+    lineHeight: 30,
+  },
+
+  loginForm: {
+    width: "100%",
+    maxWidth: 440,
+    alignSelf: "center",
+  },
+
+  roleSummary: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E6E2DB",
+  },
+
+  roleSummaryName: {
+    flexShrink: 1,
+    color: "#222",
+    fontWeight: "700",
+    fontSize: 15,
+  },
+
+  roleBadge: {
+    color: "#FFFFFF",
+    backgroundColor: "#315B50",
+    overflow: "hidden",
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
+  dashboardStats: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 6,
+  },
+
+  dashboardStat: {
+    flexGrow: 1,
+    flexBasis: 130,
+    minWidth: 120,
+    padding: 14,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E6E2DB",
+    borderRadius: 6,
+  },
+
+  dashboardStatValue: {
+    color: "#7A1530",
+    fontSize: 24,
+    fontWeight: "800",
+  },
+
+  dashboardStatLabel: {
+    color: "#555",
+    fontSize: 12,
+    marginTop: 4,
   },
 
   logo: {
@@ -3322,8 +3644,12 @@ const styles = StyleSheet.create({
   },
 
   myMarketContent: {
-    padding: 24,
+    paddingHorizontal: 20,
+    paddingTop: 16,
     paddingBottom: 48,
+    width: "100%",
+    maxWidth: 920,
+    alignSelf: "center",
   },
 
   myMarketError: {
