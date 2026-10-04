@@ -17,9 +17,9 @@ Image,
   Linking,
   Platform,
 } from "react-native";
-import { createClient, User } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
 import * as ImagePicker from "expo-image-picker";
-const supabase = createClient(process.env.EXPO_PUBLIC_SUPABASE_URL!, process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY!);
+import { supabase } from "@/lib/supabase";
 
 type Listing = {
   id?: string | number;
