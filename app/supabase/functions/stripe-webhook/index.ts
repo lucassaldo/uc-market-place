@@ -105,27 +105,26 @@ async function verifyStripeSignature(
   );
 }
 
-async function supabasePatch(
+async function supabaseRpc(
   url: string,
   serviceKey: string,
-  filter: string,
-  body: unknown,
+  functionName: string,
+  body: Record<string, unknown>,
 ) {
-  const response = await fetch(`${url}${filter}`, {
-    method: "PATCH",
+  const response = await fetch(`${url}/rest/v1/rpc/${functionName}`, {
+    method: "POST",
     headers: {
       apikey: serviceKey,
       Authorization: `Bearer ${serviceKey}`,
       "Content-Type": "application/json",
-      Prefer: "return=minimal",
     },
     body: JSON.stringify(body),
   });
 
+  const message = await response.text();
   if (!response.ok) {
-    const message = await response.text();
     throw new Error(
-      `Supabase update failed (${response.status}): ${message}`,
+      `Supabase payment update failed (${response.status}): ${message}`,
     );
   }
 }
@@ -185,31 +184,53 @@ Deno.serve(async (req) => {
 
     const event = JSON.parse(body);
 
-    if (event.type === "checkout.session.completed") {
+    if (
+      event.type === "checkout.session.completed" ||
+      event.type === "checkout.session.async_payment_succeeded"
+    ) {
       const session = event.data?.object;
-
       const purchaseId = session?.metadata?.purchase_id;
       const listingId = session?.metadata?.listing_id;
-
-      if (purchaseId) {
-        await supabasePatch(
-          supabaseUrl,
-          serviceKey,
-          `/rest/v1/purchases?id=eq.${encodeURIComponent(
-            String(purchaseId),
-          )}`,
-          { status: "completed" },
-        );
+      if (session?.payment_status !== "paid") {
+        return json({ received: true });
+      }
+      if (!purchaseId || !listingId || !session?.id) {
+        throw new Error("Paid Checkout session is missing purchase metadata");
       }
 
-      if (listingId) {
-        await supabasePatch(
+      const paymentIntentId = typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id ?? null;
+      await supabaseRpc(
           supabaseUrl,
           serviceKey,
-          `/rest/v1/listings?id=eq.${encodeURIComponent(
-            String(listingId),
-          )}`,
-          { status: "Sold" },
+          "complete_online_purchase",
+          {
+            p_purchase_id: String(purchaseId),
+            p_listing_id: Number(listingId),
+            p_checkout_session_id: String(session.id),
+            p_payment_intent_id: paymentIntentId,
+          },
+        );
+    }
+
+    if (
+      event.type === "checkout.session.expired" ||
+      event.type === "checkout.session.async_payment_failed"
+    ) {
+      const session = event.data?.object;
+      const purchaseId = session?.metadata?.purchase_id;
+      if (purchaseId && session?.id) {
+        const attempt = Number(session.metadata?.checkout_attempt);
+        await supabaseRpc(
+          supabaseUrl,
+          serviceKey,
+          "expire_purchase_checkout",
+          {
+            p_purchase_id: String(purchaseId),
+            p_checkout_session_id: String(session.id),
+            p_checkout_attempt: Number.isInteger(attempt) ? attempt : null,
+          },
         );
       }
     }

@@ -34,6 +34,7 @@ type Listing = {
   images?: string[] | null;
   status?: "Available" | "Pending" | "Sold" | string | null;
   created_at?: string;
+  removed_at?: string | null;
   emoji?: string;
   seller_profile?: Profile | Profile[] | null;
 };
@@ -68,7 +69,9 @@ type Purchase = {
   buyer_id: string;
   seller_id: string;
   price: string;
-  status: "pending" | "accepted" | "declined" | "cancelled" | "completed" | string;
+  status: "pending" | "accepted" | "declined" | "cancelled" | "cash_pending" | "completed" | string;
+  payment_method?: "online" | "cash";
+  stripe_checkout_session_id?: string | null;
   created_at: string;
   listing?: Listing | null;
 };
@@ -97,6 +100,18 @@ const sellerName = (listing: Listing) =>
   getProfile(listing)?.email ||
   (listing.seller && listing.seller !== "You" ? listing.seller : null) ||
   "Seller unavailable";
+
+const purchaseStatusLabel = (purchase: Purchase) => {
+  if (purchase.status === "pending") return "Requested";
+  if (purchase.status === "accepted") return "Accepted / Reserved — payment required";
+  if (purchase.status === "cash_pending") return "Awaiting in-person completion";
+  if (purchase.status === "completed") {
+    return purchase.payment_method === "cash" ? "Paid in person / Sold" : "Paid / Sold";
+  }
+  if (purchase.status === "declined") return "Declined";
+  if (purchase.status === "cancelled") return "Cancelled";
+  return purchase.status;
+};
 
 type PatriotCharacterProps = {
   className: "seller" | "handshake" | "package";
@@ -136,11 +151,13 @@ const PatriotCharacter = ({ className, position }: PatriotCharacterProps) => (
   </View>
 );
 
-const fetchListingsWithProfiles = async (): Promise<Listing[]> => {
-  const { data: listingData, error: listingsError } = await supabase
+const fetchListingsWithProfiles = async (includeRemoved = false): Promise<Listing[]> => {
+  let listingQuery = supabase
     .from("listings")
     .select("*")
     .order("created_at", { ascending: false });
+  if (!includeRemoved) listingQuery = listingQuery.is("removed_at", null);
+  const { data: listingData, error: listingsError } = await listingQuery;
   if (listingsError) throw listingsError;
 
   const listings = (listingData ?? []) as Listing[];
@@ -210,7 +227,7 @@ const [marketSection, setMarketSection] = useState<
  const [editPrice, setEditPrice] = useState("");
  const [editDescription, setEditDescription] = useState("");
  const [editCategory, setEditCategory] = useState("Electronics");
- const [editStatus, setEditStatus] = useState<"Available" | "Pending" | "Sold">("Available");
+ const [editStatus, setEditStatus] = useState<"Available" | "Pending" | "Reserved" | "Sold">("Available");
  const [editFiles, setEditFiles] = useState<ImagePicker.ImagePickerAsset[]>([]);
  const [editLoading, setEditLoading] = useState(false);
  const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -220,16 +237,20 @@ const [marketSection, setMarketSection] = useState<
  const [chatLoading, setChatLoading] = useState(false);
  const [messageSending, setMessageSending] = useState(false);
  const [purchaseLoading, setPurchaseLoading] = useState(false);
+ const [purchaseError, setPurchaseError] = useState("");
  const [purchaseRequestIds, setPurchaseRequestIds] = useState<Set<string>>(new Set());
  const [showConversations, setShowConversations] = useState(false);
  const [purchases, setPurchases] = useState<Purchase[]>([]);
  const [incomingPurchases, setIncomingPurchases] = useState<Purchase[]>([]);
  const [showMyMarket, setShowMyMarket] = useState(false);
  const [myMarketLoading, setMyMarketLoading] = useState(false);
- const [stripeConnected, setStripeConnected] = useState(false);
  const [myMarketError, setMyMarketError] = useState("");
  const [marketConversations, setMarketConversations] = useState<ConversationPreview[]>([]);
  const [purchaseActionLoading, setPurchaseActionLoading] = useState<string | null>(null);
+ const [adminListings, setAdminListings] = useState<Listing[]>([]);
+ const [moderationTarget, setModerationTarget] = useState<Listing | null>(null);
+ const [moderationLoading, setModerationLoading] = useState(false);
+ const [stripeStatus, setStripeStatus] = useState<"unknown" | "setup_required" | "setup_incomplete" | "connected">("unknown");
 useEffect(() => {
   supabase.auth.getSession().then(({ data }) => {
     setAuthUser(data.session?.user ?? null);
@@ -318,6 +339,28 @@ useEffect(() => {
 }, [authUser]);
 
 useEffect(() => {
+  let active = true;
+  const showCheckoutReturnMessage = (url: string | null) => {
+    if (!url) return;
+    const paymentStatus = new URL(url).searchParams.get("payment");
+    if (paymentStatus === "success") {
+      Alert.alert("Payment processing", "Stripe is confirming your payment. Your purchase will show as paid after server verification.");
+    } else if (paymentStatus === "cancelled") {
+      Alert.alert("Checkout cancelled", "No payment was confirmed. Your reservation remains in My Purchases while the Checkout session is active.");
+    }
+  };
+
+  void Linking.getInitialURL().then((url) => {
+    if (active) showCheckoutReturnMessage(url);
+  });
+  const subscription = Linking.addEventListener("url", ({ url }) => showCheckoutReturnMessage(url));
+  return () => {
+    active = false;
+    subscription.remove();
+  };
+}, []);
+
+useEffect(() => {
   if (!authUser) return;
   void supabase
     .from("conversations")
@@ -401,8 +444,8 @@ const toggleFavorite = async (listing: Listing) => {
   };
 
 
-  const payForPurchase = async (purchase: any) => {
-    if (!authUser) return;
+  const payForPurchase = async (purchase: Purchase) => {
+    if (!authUser || purchase.buyer_id !== authUser.id || purchase.status !== "accepted") return;
 
     try {
       setPurchaseActionLoading(purchase.id);
@@ -422,6 +465,12 @@ const toggleFavorite = async (listing: Listing) => {
         );
       }
 
+      if (data.sessionId) {
+        const updateSession = (current: Purchase[]) => current.map((item) =>
+          item.id === purchase.id ? { ...item, stripe_checkout_session_id: data.sessionId } : item
+        );
+        setPurchases(updateSession);
+      }
       await Linking.openURL(data.url);
     } catch (error) {
       Alert.alert(
@@ -437,6 +486,7 @@ const toggleFavorite = async (listing: Listing) => {
 
   const requestPurchase = async (listing: Listing) => {
     if (purchaseLoading) return;
+    setPurchaseError("");
     if (!authUser) {
       Alert.alert("Sign in required", "Sign in to request a purchase.");
       return;
@@ -455,10 +505,6 @@ const toggleFavorite = async (listing: Listing) => {
     }
 
     const listingKey = String(listing.id);
-    if (purchaseRequestIds.has(listingKey)) {
-      Alert.alert("Request already sent", "You already have an active purchase request for this listing.");
-      return;
-    }
 
     setPurchaseLoading(true);
     try {
@@ -472,30 +518,35 @@ const toggleFavorite = async (listing: Listing) => {
       if (existingError) throw existingError;
       if (existingRows?.length) {
         setPurchaseRequestIds((current) => new Set(current).add(listingKey));
-        Alert.alert("Request already sent", "You already have an active purchase request for this listing.");
+        await refreshMyPurchases(authUser.id);
         return;
       }
 
-      const { error: insertError } = await supabase.from("purchases").insert({
+      const { data: createdPurchase, error: insertError } = await supabase.from("purchases").insert({
         listing_id: listing.id,
         buyer_id: authUser.id,
         seller_id: listing.seller_id,
         price: listing.price,
         status: "pending",
-      });
+      }).select("*, listing:listings(*)").single();
       if (insertError) {
         if (insertError.code === "23505") {
           setPurchaseRequestIds((current) => new Set(current).add(listingKey));
-          Alert.alert("Request already sent", "You already have an active purchase request for this listing.");
+          await refreshMyPurchases(authUser.id);
           return;
         }
         throw insertError;
       }
 
       setPurchaseRequestIds((current) => new Set(current).add(listingKey));
-      Alert.alert("Purchase request sent!", "The seller can now review your request.");
+      if (createdPurchase) {
+        setPurchases((current) => [createdPurchase as Purchase, ...current]);
+      }
+      await refreshMyPurchases(authUser.id);
+      Alert.alert("Purchase request sent", "Purchase request sent — waiting for the seller to accept.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to send your purchase request.";
+      setPurchaseError(message);
       Alert.alert("Unable to send purchase request", message);
     } finally {
       setPurchaseLoading(false);
@@ -584,7 +635,7 @@ const toggleFavorite = async (listing: Listing) => {
     setEditPrice(listing.price.replace(/^\$/, ""));
     setEditDescription(listing.description ?? "");
     setEditCategory(listing.category);
-    setEditStatus((listing.status === "Pending" || listing.status === "Sold" ? listing.status : "Available"));
+    setEditStatus((listing.status === "Pending" || listing.status === "Reserved" || listing.status === "Sold" ? listing.status : "Available"));
     setEditFiles([]);
     setShowEditListing(true);
   };
@@ -721,22 +772,151 @@ const toggleFavorite = async (listing: Listing) => {
     }
     setPurchaseActionLoading(purchase.id);
     try {
-      const { error } = await supabase
-        .from("purchases")
-        .update({ status })
-        .eq("id", purchase.id)
-        .eq("seller_id", authUser.id)
-        .eq("status", "pending");
+      const { error } = await supabase.rpc("respond_to_purchase_request", {
+        p_purchase_id: purchase.id,
+        p_decision: status,
+      });
       if (error) throw error;
       const updatePurchase = (current: Purchase[]) => current.map((item) => item.id === purchase.id ? { ...item, status } : item);
       setIncomingPurchases(updatePurchase);
       setPurchases(updatePurchase);
-      Alert.alert(status === "accepted" ? "Purchase accepted" : "Purchase declined", `The request was marked ${status}.`);
+      if (status === "accepted" && purchase.listing) {
+        setListings((current) => current.map((listing) => listing.id === purchase.listing_id ? { ...listing, status: "Reserved" } : listing));
+      }
+      await refreshMyPurchases(authUser.id);
+      await refreshListings();
+      Alert.alert(
+        status === "accepted" ? "Purchase accepted" : "Purchase declined",
+        status === "accepted"
+          ? "The item is reserved for this buyer. They can now choose secure online payment or pay in person."
+          : "The request was declined and the listing remains available.",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to update purchase request.";
       Alert.alert("Unable to update purchase request", message);
     } finally {
       setPurchaseActionLoading(null);
+    }
+  };
+
+  const chooseCashPurchase = async (purchase: Purchase) => {
+    if (!authUser || purchase.buyer_id !== authUser.id || purchase.status !== "accepted") return;
+    setPurchaseActionLoading(purchase.id);
+    try {
+      const { error } = await supabase.rpc("begin_cash_purchase", {
+        p_purchase_id: purchase.id,
+      });
+      if (error) throw error;
+      await refreshMyPurchases(authUser.id);
+      await refreshListings();
+    } catch (error) {
+      Alert.alert(
+        "Unable to choose in-person payment",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setPurchaseActionLoading(null);
+    }
+  };
+
+  const confirmCashPurchase = async (purchase: Purchase) => {
+    if (!authUser || purchase.seller_id !== authUser.id || purchase.status !== "cash_pending") return;
+    setPurchaseActionLoading(purchase.id);
+    try {
+      const { error } = await supabase.rpc("confirm_cash_purchase", {
+        p_purchase_id: purchase.id,
+      });
+      if (error) throw error;
+      await refreshMyPurchases(authUser.id);
+      await refreshListings();
+    } catch (error) {
+      Alert.alert(
+        "Unable to confirm in-person payment",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setPurchaseActionLoading(null);
+    }
+  };
+
+  const cancelPurchaseRequest = async (purchase: Purchase) => {
+    if (!authUser || purchase.buyer_id !== authUser.id || purchase.status !== "pending") return;
+    setPurchaseActionLoading(purchase.id);
+    try {
+      const { error } = await supabase.rpc("cancel_purchase_request", {
+        p_purchase_id: purchase.id,
+      });
+      if (error) throw error;
+      setPurchaseRequestIds((current) => {
+        const next = new Set(current);
+        next.delete(String(purchase.listing_id));
+        return next;
+      });
+      setPurchases((current) => current.map((item) => item.id === purchase.id ? { ...item, status: "cancelled" } : item));
+    } catch (error) {
+      Alert.alert("Unable to cancel request", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setPurchaseActionLoading(null);
+    }
+  };
+
+  const refreshListings = async () => {
+    try {
+      setListings(await fetchListingsWithProfiles());
+      if (profile?.role === "admin") {
+        setAdminListings(await fetchListingsWithProfiles(true));
+      }
+    } catch (error) {
+      Alert.alert("Unable to refresh marketplace", error instanceof Error ? error.message : "Please try again.");
+    }
+  };
+
+  const moderateListing = async () => {
+    const listing = moderationTarget;
+    if (!listing || profile?.role !== "admin" || moderationLoading) return;
+    setModerationLoading(true);
+    try {
+      const { error } = await supabase.rpc("admin_remove_listing", {
+        p_listing_id: Number(listing.id),
+      });
+      if (error) throw error;
+      const removedAt = new Date().toISOString();
+      setListings((current) => current.filter((item) => item.id !== listing.id));
+      setAdminListings((current) => current.map((item) =>
+        item.id === listing.id ? { ...item, removed_at: removedAt } : item
+      ));
+      await refreshListings();
+      setModerationTarget(null);
+      Alert.alert("Listing removed", "The listing was soft-removed from the marketplace. Purchase history is unchanged.");
+    } catch (error) {
+      Alert.alert("Unable to remove listing", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setModerationLoading(false);
+    }
+  };
+
+  const checkStripeStatus = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "create-connect-account",
+        { body: { checkOnly: true } },
+      );
+      if (error) throw error;
+      if (
+        data?.status !== "connected" &&
+        data?.status !== "setup_required" &&
+        data?.status !== "setup_incomplete"
+      ) {
+        throw new Error("Stripe readiness status was not returned.");
+      }
+      setStripeStatus(data.status);
+    } catch (error) {
+      setStripeStatus("unknown");
+      console.error("Unable to verify Stripe Connect readiness:", error);
+      Alert.alert(
+        "Unable to check Stripe payments",
+        error instanceof Error ? error.message : "Please try again.",
+      );
     }
   };
 
@@ -756,6 +936,11 @@ const toggleFavorite = async (listing: Listing) => {
       const records = (data ?? []) as Purchase[];
       setPurchases(records.filter((purchase) => purchase.buyer_id === currentUser.id));
       setIncomingPurchases(records.filter((purchase) => purchase.seller_id === currentUser.id));
+      if (profile?.role === "admin") {
+        setAdminListings(await fetchListingsWithProfiles(true));
+      } else {
+        setAdminListings([]);
+      }
 
       const { data: conversationData, error: conversationError } = await supabase
         .from("conversations")
@@ -778,6 +963,7 @@ const toggleFavorite = async (listing: Listing) => {
         }),
       );
       setMarketConversations(conversationsWithPreviews);
+      await checkStripeStatus();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to load My Market.";
       setMyMarketError(message);
@@ -785,6 +971,23 @@ const toggleFavorite = async (listing: Listing) => {
     } finally {
       setMyMarketLoading(false);
     }
+  };
+
+  const refreshMyPurchases = async (userId: string) => {
+    const { data, error } = await supabase
+      .from("purchases")
+      .select("*, listing:listings(*)")
+      .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const records = (data ?? []) as Purchase[];
+    setPurchases(records.filter((purchase) => purchase.buyer_id === userId));
+    setIncomingPurchases(records.filter((purchase) => purchase.seller_id === userId));
+    setPurchaseRequestIds(new Set(
+    records
+      .filter((purchase) => purchase.buyer_id === userId && ["pending", "accepted"].includes(purchase.status))
+      .map((purchase) => String(purchase.listing_id)),
+    ));
   };
 
   const authenticate = async () => {
@@ -1047,27 +1250,17 @@ const toggleFavorite = async (listing: Listing) => {
     return (
       <SafeAreaView style={styles.container}>
         <ScrollView contentContainerStyle={styles.loginContainer} keyboardShouldPersistTaps="handled">
-          <View style={[styles.loginLayout, width < 760 && styles.loginLayoutCompact]}>
-            <View style={[styles.loginImagePlaceholder, width < 760 && styles.loginImagePlaceholderCompact]}>
-              <View style={styles.loginArtSky} />
-              <View style={styles.loginArtSun} />
-              <View style={styles.loginArtBuildingBack} />
-              <View style={styles.loginArtBuildingFront}>
-                <View style={styles.loginArtWindowRow}><View style={styles.loginArtWindow} /><View style={styles.loginArtWindow} /><View style={styles.loginArtWindow} /></View>
-                <View style={styles.loginArtDoor} />
-              </View>
-              <View style={styles.loginArtGround} />
-              <View style={styles.loginArtMarket}>
-                <View style={styles.loginArtCanopy}><Text style={styles.loginArtCanopyText}>CAMPUS MARKET</Text></View>
-                <View style={styles.loginArtCounter}><View style={styles.loginArtBook} /><View style={styles.loginArtPlant} /><View style={styles.loginArtBox} /></View>
-              </View>
-              <View style={styles.loginArtCopy}>
-                <Text style={styles.loginArtEyebrow}>UC CAMPUS EXCHANGE</Text>
-                <Text style={styles.loginArtTitle}>Good finds.{"\n"}Close to home.</Text>
-              </View>
+          <View style={[styles.loginLayout, width < 960 && styles.loginLayoutCompact]}>
+            <View style={[styles.loginImagePlaceholder, width < 960 && styles.loginImagePlaceholderCompact]}>
+              <Image
+                source={require("../../assets/images/WhatsApp Image 2026-10-04 at 17.59.25.jpeg")}
+                style={styles.loginArtwork}
+                resizeMode="contain"
+                accessibilityLabel="University of the Cumberlands — Buy, Sell, Connect"
+              />
             </View>
 
-            <View style={styles.loginForm}>
+            <View style={[styles.loginForm, width < 960 && styles.loginFormCompact]}>
               <Text style={styles.logo}>UC MARKET</Text>
               <Text style={styles.tagline}>Buy. Sell. Connect.</Text>
               <Text style={styles.title}>
@@ -1123,6 +1316,7 @@ const toggleFavorite = async (listing: Listing) => {
                     : "Don't have an account? Create one"}
                 </Text>
               </TouchableOpacity>
+              <Text style={styles.creatorCredit}>Created by Lucas Saldo • © 2026</Text>
             </View>
           </View>
         </ScrollView>
@@ -1141,6 +1335,12 @@ const toggleFavorite = async (listing: Listing) => {
     "Food",
     "Services",
   ];
+  const selectedPurchase = selectedListing
+    ? purchases.find((purchase) =>
+        purchase.listing_id === Number(selectedListing.id) &&
+        ["pending", "accepted", "cash_pending"].includes(purchase.status)
+      )
+    : undefined;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1282,7 +1482,7 @@ const toggleFavorite = async (listing: Listing) => {
 
   {showFilterMenu && (
     <View style={{ gap: 6 }}>
-      {["All", "Available", "Pending", "Sold"].map((option) => (
+      {["All", "Available", "Pending", "Reserved", "Sold"].map((option) => (
         <TouchableOpacity
           key={option}
           style={styles.filterOption}
@@ -1355,7 +1555,7 @@ const toggleFavorite = async (listing: Listing) => {
       </Text>
     </TouchableOpacity>
   ))}
-    {profile?.role === "staff" || profile?.role === "admin" ? (
+    {profile?.role === "admin" ? (
       <TouchableOpacity
         style={[
           styles.filterOption,
@@ -1369,7 +1569,7 @@ const toggleFavorite = async (listing: Listing) => {
         }}
       >
         <Text style={marketSection === "staff" ? styles.filterOptionTextActive : styles.filterOptionText}>
-          {profile.role === "admin" ? "Admin dashboard" : "Staff dashboard"}
+          Admin Dashboard
         </Text>
       </TouchableOpacity>
     ) : null}
@@ -1437,6 +1637,7 @@ const toggleFavorite = async (listing: Listing) => {
         <Text style={styles.footer}>
           UC Market • Made for students
         </Text>
+        <Text style={styles.creatorCredit}>Created by Lucas Saldo • © 2026</Text>
       </ScrollView>
 
         <Modal
@@ -1483,7 +1684,7 @@ const toggleFavorite = async (listing: Listing) => {
                 <Text style={styles.detailCategory}>{selectedListing.category}</Text>
                 <Text style={styles.detailPrice}>{selectedListing.price}</Text>
                 <Text style={[styles.status, selectedListing.status === "Sold" && styles.soldStatus]}>
-                  {selectedListing.status || "Available"}
+                  {selectedPurchase ? purchaseStatusLabel(selectedPurchase) : selectedListing.status || "Available"}
                 </Text>
                 <View style={styles.sellerRow}>
                   {listingImageUrl(getProfile(selectedListing)?.avatar_url) ? (
@@ -1506,31 +1707,76 @@ const toggleFavorite = async (listing: Listing) => {
 
                 {selectedListing.seller_id !== authUser?.id ? (
                   <>
-                    <Pressable
-                      style={styles.buyButton}
-                      disabled={purchaseLoading || (selectedListing.status ?? "Available") !== "Available" || purchaseRequestIds.has(String(selectedListing.id))}
-                      onPress={() => void requestPurchase(selectedListing)}
-                    >
-                      <Text style={styles.buyButtonText}>
-                        {selectedListing.status === "Sold"
-                          ? "Sold"
-                          : purchaseRequestIds.has(String(selectedListing.id))
-                            ? "Request sent"
-                            : purchaseLoading
-                              ? "Sending request..."
-                              : "Buy"}
-                      </Text>
-                    </Pressable>
-                    <Text style={styles.contactHint}>
-                      {selectedListing.status === "Sold"
-                        ? "This listing is no longer available."
-                        : purchaseRequestIds.has(String(selectedListing.id))
-                          ? "Your purchase request is pending seller review."
-                          : "Send a purchase request to the seller. No payment has been processed."}
-                    </Text>
+                    {selectedPurchase?.status === "pending" ? (
+                      <>
+                        <Text style={styles.contactHint}>Purchase request sent — waiting for the seller to accept.</Text>
+                        <TouchableOpacity
+                          style={[styles.purchaseDeclineButton, styles.detailPurchaseButton]}
+                          disabled={purchaseActionLoading === selectedPurchase.id}
+                          onPress={() => void cancelPurchaseRequest(selectedPurchase)}
+                        >
+                          <Text style={styles.purchaseDeclineText}>Cancel request</Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : selectedPurchase?.status === "accepted" ? (
+                      <View style={styles.detailPurchaseActions}>
+                        <Text style={styles.contactHint}>Accepted / Reserved for you. Choose a payment option:</Text>
+                        <TouchableOpacity
+                          style={[styles.purchaseAcceptButton, styles.detailPurchaseButton]}
+                          disabled={purchaseActionLoading === selectedPurchase.id}
+                          onPress={() => void payForPurchase(selectedPurchase)}
+                        >
+                          <Text style={styles.purchaseAcceptText}>Pay securely online</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.purchaseCashButton, styles.detailPurchaseButton, selectedPurchase.stripe_checkout_session_id && styles.disabledButton]}
+                          disabled={Boolean(selectedPurchase.stripe_checkout_session_id) || purchaseActionLoading === selectedPurchase.id}
+                          onPress={() => void chooseCashPurchase(selectedPurchase)}
+                        >
+                          <Text style={styles.purchaseCashText}>Pay in person / Cash</Text>
+                        </TouchableOpacity>
+                        {selectedPurchase.stripe_checkout_session_id ? (
+                          <Text style={styles.contactHint}>An online Checkout session is active. Cash can be selected after that session expires.</Text>
+                        ) : null}
+                      </View>
+                    ) : selectedPurchase?.status === "cash_pending" ? (
+                      <Text style={styles.contactHint}>Pay in person with the seller. The listing is not marked sold until the seller confirms receiving the cash.</Text>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          style={styles.buyButton}
+                          disabled={purchaseLoading || (selectedListing.status ?? "Available") !== "Available"}
+                          onPress={() => void requestPurchase(selectedListing)}
+                        >
+                          <Text style={styles.buyButtonText}>
+                            {selectedListing.status === "Sold"
+                              ? "Sold"
+                              : (selectedListing.status ?? "Available") === "Reserved"
+                                ? "Reserved"
+                                : purchaseLoading
+                                  ? "Sending request..."
+                                  : purchaseRequestIds.has(String(selectedListing.id))
+                                    ? "Check request status"
+                                    : "Request to buy"}
+                          </Text>
+                        </TouchableOpacity>
+                        {purchaseError ? <Text style={styles.authError}>{purchaseError}</Text> : null}
+                        <Text style={styles.contactHint}>
+                          {selectedListing.status === "Sold"
+                            ? "This listing is no longer available."
+                            : selectedListing.status === "Reserved"
+                              ? "This item is reserved for an accepted buyer."
+                              : selectedListing.status === "Pending"
+                                ? "This listing is currently unavailable."
+                                : purchaseRequestIds.has(String(selectedListing.id))
+                                  ? "Check your active request; a duplicate request will not be created."
+                                : "Request to buy. No payment is taken unless the seller accepts."}
+                        </Text>
+                      </>
+                    )}
                     <Pressable
                       style={styles.chatButton}
-                      disabled={chatLoading || selectedListing.status === "Sold"}
+                      disabled={chatLoading || selectedListing.status === "Sold" || selectedListing.status === "Reserved"}
                       onPress={() => void openConversation(selectedListing)}
                     >
                       <Text style={styles.chatButtonText}>Chat with Seller</Text>
@@ -1549,11 +1795,17 @@ const toggleFavorite = async (listing: Listing) => {
                       <Text style={styles.deleteListingButtonText}>Delete listing</Text>
                     </TouchableOpacity>
                     <Text style={styles.statusLabel}>Seller status</Text>
-                    {(["Available", "Pending", "Sold"] as const).map((status) => (
-                      <TouchableOpacity key={status} style={[styles.statusOption, selectedListing.status === status && styles.statusOptionActive]} onPress={() => void updateListingStatus(selectedListing, status)}>
-                        <Text style={selectedListing.status === status ? styles.statusOptionTextActive : styles.statusOptionText}>{status}</Text>
-                      </TouchableOpacity>
-                    ))}
+                    {selectedListing.status === "Reserved" || selectedListing.status === "Sold" ? (
+                      <Text style={styles.editImageHint}>
+                        {selectedListing.status === "Reserved" ? "Reserved until the purchase is completed." : "Sold listings cannot be reopened."}
+                      </Text>
+                    ) : (
+                      (["Available", "Pending", "Sold"] as const).map((status) => (
+                        <TouchableOpacity key={status} style={[styles.statusOption, selectedListing.status === status && styles.statusOptionActive]} onPress={() => void updateListingStatus(selectedListing, status)}>
+                          <Text style={selectedListing.status === status ? styles.statusOptionTextActive : styles.statusOptionText}>{status}</Text>
+                        </TouchableOpacity>
+                      ))
+                    )}
                   </View>
                 ) : null}
               </ScrollView>
@@ -1582,13 +1834,19 @@ const toggleFavorite = async (listing: Listing) => {
                 ))}
               </ScrollView>
               <Text style={styles.editFieldLabel}>Status</Text>
-              <View style={styles.editOptionRow}>
-                {(["Available", "Pending", "Sold"] as const).map((status) => (
-                  <TouchableOpacity key={status} style={[styles.editOption, editStatus === status && styles.editOptionActive]} onPress={() => setEditStatus(status)}>
-                    <Text style={editStatus === status ? styles.editOptionTextActive : styles.editOptionText}>{status}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              {editStatus === "Reserved" || editStatus === "Sold" ? (
+                <Text style={styles.editImageHint}>
+                  {editStatus === "Reserved" ? "Reserved while this purchase is completed; sellers cannot reopen it." : "Sold listings cannot be reopened."}
+                </Text>
+              ) : (
+                <View style={styles.editOptionRow}>
+                  {(["Available", "Pending", "Sold"] as const).map((status) => (
+                    <TouchableOpacity key={status} style={[styles.editOption, editStatus === status && styles.editOptionActive]} onPress={() => setEditStatus(status)}>
+                      <Text style={editStatus === status ? styles.editOptionTextActive : styles.editOptionText}>{status}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
               <Text style={styles.editFieldLabel}>Images</Text>
               <Text style={styles.editImageHint}>{selectedListing && listingImages(selectedListing).length ? `${listingImages(selectedListing).length} existing image(s)` : "No existing images"}</Text>
               <TouchableOpacity style={styles.imagePicker} onPress={() => void chooseEditImages()}>
@@ -1612,6 +1870,25 @@ const toggleFavorite = async (listing: Listing) => {
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.deleteConfirmButton} disabled={deleteLoading} onPress={() => void confirmDeleteListing()}>
                   <Text style={styles.deleteConfirmText}>{deleteLoading ? "Deleting..." : "Delete"}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={moderationTarget !== null} transparent animationType="fade" onRequestClose={() => { if (!moderationLoading) setModerationTarget(null); }}>
+          <View style={styles.deleteConfirmBackdrop}>
+            <View style={styles.deleteConfirmCard}>
+              <Text style={styles.deleteConfirmTitle}>Remove marketplace listing?</Text>
+              <Text style={styles.deleteConfirmMessage}>
+                {moderationTarget?.title ? `"${moderationTarget.title}" will be hidden from the marketplace. Its purchase history will be preserved.` : "This listing will be hidden from the marketplace."}
+              </Text>
+              <View style={styles.deleteConfirmActions}>
+                <TouchableOpacity style={styles.deleteCancelButton} disabled={moderationLoading} onPress={() => setModerationTarget(null)}>
+                  <Text style={styles.deleteCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.deleteConfirmButton} disabled={moderationLoading} onPress={() => void moderateListing()}>
+                  <Text style={styles.deleteConfirmText}>{moderationLoading ? "Removing..." : "Remove listing"}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1720,14 +1997,12 @@ const toggleFavorite = async (listing: Listing) => {
                       );
 
                     if (error) throw error;
-                    if (data?.connected) {
-                      setStripeConnected(true);
-  Alert.alert(
-    "Stripe connected",
-    "Your Stripe payments account is already connected and ready to receive payments."
-  );
-  return;
-}
+                    if (data?.status === "connected" || data?.connected) {
+                      setStripeStatus("connected");
+                      Alert.alert("Stripe connected", "Your Stripe payments account is ready to receive payments.");
+                      return;
+                    }
+                    setStripeStatus(data?.status === "setup_required" ? "setup_required" : "setup_incomplete");
 
                     if (!data?.onboardingUrl) {
                       throw new Error(
@@ -1754,7 +2029,11 @@ const toggleFavorite = async (listing: Listing) => {
                     fontWeight: "800",
                   }}
                 >
-                  {stripeConnected ? "Stripe payments connected ✓" : "Set up Stripe payments"}
+                  {stripeStatus === "connected"
+                    ? "Stripe payments connected ✓"
+                    : stripeStatus === "setup_incomplete"
+                      ? "Finish Stripe setup"
+                      : "Set up Stripe payments"}
                 </Text>
               </TouchableOpacity>
 
@@ -1784,37 +2063,46 @@ const toggleFavorite = async (listing: Listing) => {
   <>
 <Text style={styles.myMarketSection}>My Purchases</Text>
               {purchases.length ? purchases.map((purchase) => (
-                <TouchableOpacity key={purchase.id} style={styles.myMarketRow} onPress={() => { if (purchase.listing) { setShowMyMarket(false); openListingDetails(purchase.listing); } }}>
+                <View key={purchase.id} style={styles.myMarketRow}>
                   <View style={styles.myMarketRowContent}>
                     <Text style={styles.cardTitle}>{purchase.listing?.title || `Listing #${purchase.listing_id}`}</Text>
-                    <Text style={styles.seller}>{purchase.listing ? sellerName(purchase.listing) : "Seller unavailable"} · {purchase.price} · {purchase.status}</Text>
+                    <Text style={styles.seller}>{purchase.listing ? sellerName(purchase.listing) : "Seller unavailable"} · {purchase.price} · {purchaseStatusLabel(purchase)}</Text>
                     {purchase.status === "accepted" ? (
-                      <TouchableOpacity
-                        style={{
-                          backgroundColor: "#7A1530",
-                          paddingVertical: 10,
-                          paddingHorizontal: 14,
-                          borderRadius: 10,
-                          marginTop: 8,
-                          alignSelf: "flex-start",
-                        }}
-                        disabled={purchaseActionLoading === purchase.id}
-                        onPress={() => void payForPurchase(purchase)}
-                      >
-                        <Text
-                          style={{
-                            color: "#FFFFFF",
-                            fontWeight: "800",
-                          }}
+                      <View style={styles.purchaseActions}>
+                        <TouchableOpacity
+                          style={styles.purchaseAcceptButton}
+                          disabled={purchaseActionLoading === purchase.id}
+                          onPress={() => void payForPurchase(purchase)}
                         >
-                          {purchaseActionLoading === purchase.id
-                            ? "Opening..."
-                            : "Pay now"}
+                          <Text style={styles.purchaseAcceptText}>
+                            {purchaseActionLoading === purchase.id ? "Opening..." : "Pay securely online"}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.purchaseCashButton, (purchase.stripe_checkout_session_id || purchaseActionLoading === purchase.id) && styles.disabledButton]}
+                          disabled={Boolean(purchase.stripe_checkout_session_id) || purchaseActionLoading === purchase.id}
+                          onPress={() => void chooseCashPurchase(purchase)}
+                        >
+                          <Text style={styles.purchaseCashText}>Pay in person / Cash</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                    {purchase.status === "pending" ? (
+                      <TouchableOpacity
+                        style={[styles.purchaseDeclineButton, styles.detailPurchaseButton]}
+                        disabled={purchaseActionLoading === purchase.id}
+                        onPress={() => void cancelPurchaseRequest(purchase)}
+                      >
+                        <Text style={styles.purchaseDeclineText}>
+                          {purchaseActionLoading === purchase.id ? "Cancelling..." : "Cancel request"}
                         </Text>
                       </TouchableOpacity>
                     ) : null}
+                    {purchase.status === "cash_pending" ? (
+                      <Text style={styles.contactHint}>Meet the seller to exchange the item and cash. The seller must confirm receipt before the listing is marked sold.</Text>
+                    ) : null}
                   </View>
-                </TouchableOpacity>
+                </View>
               )) : <Text style={styles.contactHint}>No purchase requests yet.</Text>}
 
               
@@ -1828,11 +2116,26 @@ const toggleFavorite = async (listing: Listing) => {
                 <View key={purchase.id} style={styles.myMarketRow}>
                   <View style={styles.myMarketRowContent}>
                     <Text style={styles.cardTitle}>{purchase.listing?.title || `Listing #${purchase.listing_id}`}</Text>
-                    <Text style={styles.seller}>Buyer {purchase.buyer_id.slice(0, 8)} · {purchase.price} · {purchase.status}</Text>
+                    <Text style={styles.seller}>Buyer {purchase.buyer_id.slice(0, 8)} · {purchase.price} · {purchaseStatusLabel(purchase)}</Text>
                     {purchase.status === "pending" ? <View style={styles.purchaseActions}>
                       <TouchableOpacity style={styles.purchaseAcceptButton} disabled={purchaseActionLoading === purchase.id} onPress={() => void updatePurchaseStatus(purchase, "accepted")}><Text style={styles.purchaseAcceptText}>{purchaseActionLoading === purchase.id ? "Saving..." : "Accept"}</Text></TouchableOpacity>
                       <TouchableOpacity style={styles.purchaseDeclineButton} disabled={purchaseActionLoading === purchase.id} onPress={() => void updatePurchaseStatus(purchase, "declined")}><Text style={styles.purchaseDeclineText}>Decline</Text></TouchableOpacity>
                     </View> : null}
+                    {purchase.status === "accepted" ? <Text style={styles.contactHint}>Accepted — the item is reserved for this buyer and payment is required.</Text> : null}
+                    {purchase.status === "cash_pending" ? (
+                      <>
+                        <Text style={styles.contactHint}>Confirm only after you have received the cash in person.</Text>
+                        <TouchableOpacity
+                          style={[styles.purchaseAcceptButton, styles.detailPurchaseButton]}
+                          disabled={purchaseActionLoading === purchase.id}
+                          onPress={() => void confirmCashPurchase(purchase)}
+                        >
+                          <Text style={styles.purchaseAcceptText}>
+                            {purchaseActionLoading === purchase.id ? "Saving..." : "Confirm cash received"}
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : null}
                   </View>
                 </View>
               )) : <Text style={styles.contactHint}>No incoming purchase requests.</Text>}
@@ -1857,31 +2160,37 @@ const toggleFavorite = async (listing: Listing) => {
   </>
 )}
 
-{marketSection === "staff" && (profile?.role === "staff" || profile?.role === "admin") && (
+{marketSection === "staff" && profile?.role === "admin" && (
   <View>
-    <Text style={styles.myMarketSection}>Marketplace snapshot</Text>
-    <View style={styles.dashboardStats}>
-      <View style={styles.dashboardStat}>
-        <Text style={styles.dashboardStatValue}>{listings.length}</Text>
-        <Text style={styles.dashboardStatLabel}>Visible listings</Text>
+    <View style={styles.adminDashboardHeader}>
+      <View>
+        <Text style={styles.myMarketSection}>Admin Dashboard</Text>
+        <Text style={styles.contactHint}>Review listings across UC Market. Removed listings are soft-hidden; purchase history is preserved.</Text>
       </View>
-      <View style={styles.dashboardStat}>
-        <Text style={styles.dashboardStatValue}>{listings.filter((listing) => (listing.status ?? "Available") === "Available").length}</Text>
-        <Text style={styles.dashboardStatLabel}>Available</Text>
-      </View>
-      <View style={styles.dashboardStat}>
-        <Text style={styles.dashboardStatValue}>{listings.filter((listing) => listing.status === "Pending").length}</Text>
-        <Text style={styles.dashboardStatLabel}>Pending</Text>
-      </View>
-      <View style={styles.dashboardStat}>
-        <Text style={styles.dashboardStatValue}>{listings.filter((listing) => listing.status === "Sold").length}</Text>
-        <Text style={styles.dashboardStatLabel}>Sold</Text>
-      </View>
-      <View style={styles.dashboardStat}>
-        <Text style={styles.dashboardStatValue}>{purchases.length + incomingPurchases.length}</Text>
-        <Text style={styles.dashboardStatLabel}>Your purchase requests</Text>
-      </View>
+      <TouchableOpacity onPress={() => void refreshListings()} disabled={myMarketLoading}>
+        <Text style={styles.myMarketAction}>Refresh</Text>
+      </TouchableOpacity>
     </View>
+    {adminListings.length ? adminListings.map((listing) => (
+      <View key={String(listing.id)} style={styles.adminListingRow}>
+        <View style={styles.myMarketRowContent}>
+          <Text style={styles.cardTitle}>{listing.title}</Text>
+          <Text style={styles.seller}>Seller: {sellerName(listing)} · {listing.price}</Text>
+          <Text style={styles.seller}>Status: {listing.removed_at ? "Removed" : listing.status || "Available"} · Created: {listing.created_at ? new Date(listing.created_at).toLocaleDateString() : "Date unavailable"}</Text>
+        </View>
+        {listing.removed_at ? (
+          <Text style={styles.removedListingLabel}>Removed</Text>
+        ) : (
+          <TouchableOpacity
+            style={styles.moderateButton}
+            disabled={moderationLoading}
+            onPress={() => setModerationTarget(listing)}
+          >
+            <Text style={styles.moderateButtonText}>Remove</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    )) : <Text style={styles.contactHint}>No listings found.</Text>}
   </View>
 )}
 </ScrollView>
@@ -1963,189 +2272,54 @@ const styles = StyleSheet.create({
 
   loginLayout: {
     width: "100%",
-    maxWidth: 1080,
+    maxWidth: 1480,
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 44,
+    gap: 28,
   },
 
   loginLayoutCompact: {
     flexDirection: "column",
-    gap: 24,
+    gap: 20,
   },
 
   loginImagePlaceholder: {
-    width: "48%",
-    height: 440,
-    maxHeight: 600,
+    width: "58%",
+    maxWidth: 900,
+    aspectRatio: 1600 / 600,
     borderRadius: 8,
     overflow: "hidden",
-    backgroundColor: "#193B49",
-    position: "relative",
-    justifyContent: "flex-end",
+    backgroundColor: "#FFFFFF",
   },
 
   loginImagePlaceholderCompact: {
     width: "100%",
-    height: 190,
+    maxWidth: 900,
   },
 
-  loginArtSky: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: "#B6D0C8",
+  loginArtwork: {
+    width: "100%",
+    height: "100%",
   },
 
-  loginArtSun: {
-    position: "absolute",
-    top: 30,
-    right: 40,
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#E8B564",
-  },
-
-  loginArtBuildingBack: {
-    position: "absolute",
-    bottom: 88,
-    right: "9%",
-    width: "38%",
-    height: "42%",
-    backgroundColor: "#678A84",
-    borderTopLeftRadius: 42,
-    borderTopRightRadius: 42,
-    borderWidth: 8,
-    borderColor: "#E9E2CF",
-  },
-
-  loginArtBuildingFront: {
-    position: "absolute",
-    bottom: 88,
-    left: "9%",
-    width: "43%",
-    height: "35%",
-    backgroundColor: "#E8DDC3",
-    borderTopWidth: 10,
-    borderTopColor: "#A14C46",
-    justifyContent: "space-evenly",
-    alignItems: "center",
-  },
-
-  loginArtWindowRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-
-  loginArtWindow: {
-    width: 16,
-    height: 22,
-    backgroundColor: "#547C83",
-    borderWidth: 3,
-    borderColor: "#F7F0DD",
-  },
-
-  loginArtDoor: {
-    position: "absolute",
-    bottom: 0,
-    width: 23,
-    height: 35,
-    backgroundColor: "#8C5346",
-  },
-
-  loginArtGround: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 96,
-    backgroundColor: "#315B50",
-  },
-
-  loginArtMarket: {
-    position: "absolute",
-    bottom: 36,
-    right: "8%",
-    width: "37%",
-    height: 82,
-  },
-
-  loginArtCanopy: {
-    height: 25,
-    backgroundColor: "#9E3542",
-    borderBottomWidth: 4,
-    borderBottomColor: "#F0D8C4",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  loginArtCanopyText: {
-    color: "#FFFFFF",
-    fontSize: 9,
-    fontWeight: "800",
-  },
-
-  loginArtCounter: {
-    height: 48,
-    backgroundColor: "#F4E8D4",
-    borderBottomWidth: 7,
-    borderBottomColor: "#A97550",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-evenly",
-  },
-
-  loginArtBook: {
-    width: 15,
-    height: 24,
-    backgroundColor: "#547C83",
-    borderLeftWidth: 3,
-    borderLeftColor: "#D5A458",
-  },
-
-  loginArtPlant: {
-    width: 18,
-    height: 18,
-    borderRadius: 10,
-    backgroundColor: "#568264",
-    borderBottomWidth: 5,
-    borderBottomColor: "#9A684A",
-  },
-
-  loginArtBox: {
-    width: 20,
-    height: 18,
-    backgroundColor: "#D19B5A",
-    borderWidth: 2,
-    borderColor: "#F1D5A5",
-  },
-
-  loginArtCopy: {
-    position: "absolute",
-    top: 24,
-    left: 24,
-    right: 20,
-  },
-
-  loginArtEyebrow: {
-    color: "#315B50",
-    fontSize: 10,
-    fontWeight: "800",
-    marginBottom: 8,
-  },
-
-  loginArtTitle: {
-    color: "#193B49",
-    fontSize: 26,
-    fontWeight: "800",
-    lineHeight: 30,
+  creatorCredit: {
+    color: "#999",
+    textAlign: "center",
+    fontSize: 11,
+    marginTop: 14,
+    marginBottom: 4,
   },
 
   loginForm: {
-    width: "100%",
+    width: "36%",
     maxWidth: 440,
     alignSelf: "center",
+  },
+
+  loginFormCompact: {
+    width: "100%",
   },
 
   roleSummary: {
@@ -2182,6 +2356,45 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 10,
     marginTop: 6,
+  },
+
+  adminDashboardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 10,
+  },
+
+  adminListingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E6E2DB",
+    padding: 14,
+    marginBottom: 9,
+  },
+
+  moderateButton: {
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: "#A62626",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+
+  moderateButtonText: {
+    color: "#A62626",
+    fontWeight: "800",
+  },
+
+  removedListingLabel: {
+    color: "#777",
+    fontSize: 12,
+    fontWeight: "700",
   },
 
   dashboardStat: {
@@ -3735,6 +3948,16 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 
+  detailPurchaseActions: {
+    gap: 8,
+    marginTop: 10,
+  },
+
+  detailPurchaseButton: {
+    flex: 0,
+    width: "100%",
+  },
+
   purchaseAcceptButton: {
     flex: 1,
     borderRadius: 9,
@@ -3745,6 +3968,20 @@ const styles = StyleSheet.create({
 
   purchaseAcceptText: {
     color: "#FFFFFF",
+    fontWeight: "800",
+  },
+
+  purchaseCashButton: {
+    flex: 1,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: "#7A1530",
+    paddingVertical: 9,
+    alignItems: "center",
+  },
+
+  purchaseCashText: {
+    color: "#7A1530",
     fontWeight: "800",
   },
 
