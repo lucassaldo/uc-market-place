@@ -41,6 +41,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "4d7ca997-e9dc-4eb4-9a2e-96cfa502c953"
+      }
+    },
+    "owner": "uc-market"
   }
 }
