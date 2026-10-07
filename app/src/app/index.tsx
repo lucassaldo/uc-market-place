@@ -528,6 +528,7 @@ const toggleFavorite = async (listing: Listing) => {
         seller_id: listing.seller_id,
         price: listing.price,
         status: "pending",
+        payment_method: "online",
       }).select("*, listing:listings(*)").single();
       if (insertError) {
         if (insertError.code === "23505") {
@@ -545,9 +546,12 @@ const toggleFavorite = async (listing: Listing) => {
       await refreshMyPurchases(authUser.id);
       Alert.alert("Purchase request sent", "Purchase request sent — waiting for the seller to accept.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to send your purchase request.";
-      setPurchaseError(message);
-      Alert.alert("Unable to send purchase request", message);
+      console.error("Unable to send purchase request", {
+        code: typeof error === "object" && error !== null && "code" in error ? error.code : undefined,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      setPurchaseError("Unable to send your purchase request. Please try again.");
+      Alert.alert("Unable to send purchase request", "Please try again.");
     } finally {
       setPurchaseLoading(false);
     }
