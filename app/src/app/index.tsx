@@ -491,15 +491,7 @@ const toggleFavorite = async (listing: Listing) => {
       Alert.alert("Sign in required", "Sign in to request a purchase.");
       return;
     }
-    if (listing.id == null || !listing.seller_id) {
-      Alert.alert("Purchase unavailable", "This listing does not have a valid seller.");
-      return;
-    }
-    if (listing.seller_id === authUser.id) {
-      Alert.alert("This is your listing", "You cannot purchase your own listing.");
-      return;
-    }
-    if ((listing.status ?? "Available") !== "Available") {
+    if (listing.id == null) {
       Alert.alert("Purchase unavailable", "This listing is no longer available.");
       return;
     }
@@ -522,11 +514,32 @@ const toggleFavorite = async (listing: Listing) => {
         return;
       }
 
+      const { data: freshListing, error: listingError } = await supabase
+        .from("listings")
+        .select("id,seller_id,status,removed_at,price")
+        .eq("id", listing.id)
+        .maybeSingle();
+      if (listingError) throw listingError;
+      if (
+        !freshListing ||
+        freshListing.status !== "Available" ||
+        freshListing.removed_at !== null ||
+        !freshListing.seller_id
+      ) {
+        setPurchaseError("This listing is no longer available.");
+        Alert.alert("Purchase unavailable", "This listing is no longer available.");
+        return;
+      }
+      if (freshListing.seller_id === authUser.id) {
+        Alert.alert("This is your listing", "You cannot purchase your own listing.");
+        return;
+      }
+
       const { data: createdPurchase, error: insertError } = await supabase.from("purchases").insert({
-        listing_id: listing.id,
+        listing_id: freshListing.id,
         buyer_id: authUser.id,
-        seller_id: listing.seller_id,
-        price: listing.price,
+        seller_id: freshListing.seller_id,
+        price: freshListing.price,
         status: "pending",
         payment_method: "online",
       }).select("*, listing:listings(*)").single();
