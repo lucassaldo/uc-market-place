@@ -42,7 +42,7 @@ type Listing = {
 type Profile = {
   id: string;
   full_name: string | null;
-  email: string | null;
+  email?: string | null;
   avatar_url: string | null;
   role?: "student" | "staff" | "admin";
 };
@@ -97,9 +97,43 @@ const getProfile = (listing: Listing) =>
 
 const sellerName = (listing: Listing) =>
   getProfile(listing)?.full_name?.trim() ||
-  getProfile(listing)?.email ||
-  (listing.seller && listing.seller !== "You" ? listing.seller : null) ||
   "Seller unavailable";
+
+const fetchSellerProfiles = async (sellerIds: string[]) => {
+  if (!sellerIds.length) return new Map<string, Profile>();
+  const { data, error } = await supabase
+    .from("seller_public_profiles")
+    .select("id,full_name,avatar_url")
+    .in("id", sellerIds);
+  if (error) throw error;
+  return new Map((data ?? []).map((profile) => [profile.id, profile as Profile]));
+};
+
+const attachSellerProfiles = async <T extends { listing?: Listing | Listing[] | null },>(
+  records: T[],
+): Promise<Array<Omit<T, "listing"> & { listing?: Listing | null }>> => {
+  const sellerIds = Array.from(
+    new Set(records.map((record) => {
+      const listing = Array.isArray(record.listing) ? record.listing[0] : record.listing;
+      return listing?.seller_id;
+    }).filter((id): id is string => Boolean(id))),
+  );
+  const profilesById = await fetchSellerProfiles(sellerIds);
+  return records.map((record) => {
+    const listing = Array.isArray(record.listing) ? record.listing[0] : record.listing;
+    return {
+      ...record,
+      listing: listing
+        ? {
+            ...listing,
+            seller_profile: listing.seller_id
+              ? profilesById.get(listing.seller_id) ?? null
+              : null,
+          }
+        : listing,
+    };
+  });
+};
 
 const purchaseStatusLabel = (purchase: Purchase) => {
   if (purchase.status === "pending") return "Requested";
@@ -154,25 +188,16 @@ const PatriotCharacter = ({ className, position }: PatriotCharacterProps) => (
 const fetchListingsWithProfiles = async (includeRemoved = false): Promise<Listing[]> => {
   let listingQuery = supabase
     .from("listings")
-    .select("*")
+    .select("id,title,description,category,seller_id,price,image,image_url,images,status,created_at,removed_at")
     .order("created_at", { ascending: false });
   if (!includeRemoved) listingQuery = listingQuery.is("removed_at", null);
   const { data: listingData, error: listingsError } = await listingQuery;
   if (listingsError) throw listingsError;
 
   const listings = (listingData ?? []) as Listing[];
-  const sellerIds = Array.from(
-    new Set(listings.map((listing) => listing.seller_id).filter((sellerId): sellerId is string => Boolean(sellerId))),
+  const profilesById = await fetchSellerProfiles(
+    Array.from(new Set(listings.map((listing) => listing.seller_id).filter((id): id is string => Boolean(id)))),
   );
-  if (!sellerIds.length) return listings;
-
-  const { data: profileData, error: profilesError } = await supabase
-    .from("profiles")
-    .select("id,full_name,email,avatar_url")
-    .in("id", sellerIds);
-  if (profilesError) throw profilesError;
-
-  const profilesById = new Map((profileData ?? []).map((profile) => [profile.id, profile as Profile]));
   return listings.map((listing) => ({
     ...listing,
     seller_profile: listing.seller_id ? profilesById.get(listing.seller_id) ?? null : null,
@@ -323,13 +348,13 @@ useEffect(() => {
     }
     const { data: purchaseData, error: purchaseListError } = await supabase
       .from("purchases")
-      .select("*, listing:listings(*)")
+      .select("id,listing_id,buyer_id,seller_id,price,status,payment_method,stripe_checkout_session_id,created_at,listing:listings(id,title,description,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
       .or(`buyer_id.eq.${authUser.id},seller_id.eq.${authUser.id}`)
       .order("created_at", { ascending: false });
     if (purchaseListError) {
       Alert.alert("Unable to load purchase history", purchaseListError.message);
     } else {
-      const userPurchases = (purchaseData ?? []) as Purchase[];
+      const userPurchases = await attachSellerProfiles(purchaseData ?? []) as Purchase[];
       setPurchases(userPurchases.filter((purchase) => purchase.buyer_id === authUser.id));
       setIncomingPurchases(userPurchases.filter((purchase) => purchase.seller_id === authUser.id));
     }
@@ -462,12 +487,14 @@ useEffect(() => {
   if (!authUser) return;
   void supabase
     .from("conversations")
-    .select("*, listing:listings(*)")
+    .select("id,listing_id,buyer_id,seller_id,created_at,listing:listings(id,title,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
     .or(`buyer_id.eq.${authUser.id},seller_id.eq.${authUser.id}`)
     .order("created_at", { ascending: false })
     .then(({ data, error }) => {
       if (error) Alert.alert("Unable to load messages", error.message);
-      else setConversations((data ?? []) as Conversation[]);
+      else void attachSellerProfiles(data ?? []).then((records) => setConversations(records as Conversation[])).catch((profileError) => {
+        Alert.alert("Unable to load seller details", profileError instanceof Error ? profileError.message : "Please try again.");
+      });
     });
 }, [authUser, conversation]);
 
@@ -640,7 +667,7 @@ const toggleFavorite = async (listing: Listing) => {
         price: freshListing.price,
         status: "pending",
         payment_method: "online",
-      }).select("*, listing:listings(*)").single();
+      }).select("id,listing_id,buyer_id,seller_id,price,status,payment_method,stripe_checkout_session_id,created_at").single();
       if (insertError) {
         if (insertError.code === "23505") {
           setPurchaseRequestIds((current) => new Set(current).add(listingKey));
@@ -815,7 +842,7 @@ const toggleFavorite = async (listing: Listing) => {
         })
         .eq("id", selectedListing.id)
         .eq("seller_id", userData.user.id)
-        .select("*")
+        .select("id,title,description,category,seller_id,price,image,image_url,images,status,created_at,removed_at")
         .single();
       if (updateError) throw updateError;
 
@@ -1044,11 +1071,11 @@ const toggleFavorite = async (listing: Listing) => {
     try {
       const { data, error } = await supabase
         .from("purchases")
-        .select("*, listing:listings(*)")
+        .select("id,listing_id,buyer_id,seller_id,price,status,payment_method,stripe_checkout_session_id,created_at,listing:listings(id,title,description,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
         .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      const records = (data ?? []) as Purchase[];
+      const records = await attachSellerProfiles(data ?? []) as Purchase[];
       setPurchases(records.filter((purchase) => purchase.buyer_id === currentUser.id));
       setIncomingPurchases(records.filter((purchase) => purchase.seller_id === currentUser.id));
       if (profile?.role === "admin") {
@@ -1059,13 +1086,13 @@ const toggleFavorite = async (listing: Listing) => {
 
       const { data: conversationData, error: conversationError } = await supabase
         .from("conversations")
-        .select("*, listing:listings(*)")
+        .select("id,listing_id,buyer_id,seller_id,created_at,listing:listings(id,title,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
         .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
         .order("created_at", { ascending: false });
       if (conversationError) throw conversationError;
 
       const conversationsWithPreviews = await Promise.all(
-        ((conversationData ?? []) as Conversation[]).map(async (item) => {
+        (await attachSellerProfiles(conversationData ?? []) as Conversation[]).map(async (item) => {
           const { data: latestMessage, error: messageError } = await supabase
             .from("messages")
             .select("id,sender_id,body,created_at")
@@ -1091,11 +1118,11 @@ const toggleFavorite = async (listing: Listing) => {
   const refreshMyPurchases = async (userId: string) => {
     const { data, error } = await supabase
       .from("purchases")
-      .select("*, listing:listings(*)")
+      .select("id,listing_id,buyer_id,seller_id,price,status,payment_method,stripe_checkout_session_id,created_at,listing:listings(id,title,description,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
       .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
       .order("created_at", { ascending: false });
     if (error) throw error;
-    const records = (data ?? []) as Purchase[];
+    const records = await attachSellerProfiles(data ?? []) as Purchase[];
     setPurchases(records.filter((purchase) => purchase.buyer_id === userId));
     setIncomingPurchases(records.filter((purchase) => purchase.seller_id === userId));
     setPurchaseRequestIds(new Set(
@@ -1323,8 +1350,8 @@ const toggleFavorite = async (listing: Listing) => {
       }
 
       const imagePaths = await uploadListingImages(userData.user.id);
-      const profile = await supabase.from("profiles").select("full_name,email").eq("id", userData.user.id).maybeSingle();
-      const sellerNameValue = profile.data?.full_name?.trim() || profile.data?.email || userData.user.email || "Seller";
+      const profile = await supabase.from("profiles").select("full_name").eq("id", userData.user.id).maybeSingle();
+      const sellerNameValue = profile.data?.full_name?.trim() || "Seller";
 
       const { error } = await supabase.from("listings").insert({
         title: itemTitle.trim(),
@@ -1810,9 +1837,6 @@ const toggleFavorite = async (listing: Listing) => {
                   <View>
                     <Text style={styles.detailSeller}>
                       {selectedListing.seller_id === authUser?.id ? "Your listing" : sellerName(selectedListing)}
-                    </Text>
-                    <Text style={styles.detailEmail}>
-                      {getProfile(selectedListing)?.email || "Seller email unavailable"}
                     </Text>
                   </View>
                 </View>
