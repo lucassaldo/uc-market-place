@@ -177,6 +177,10 @@ Deno.serve(async (req) => {
       return json({ error: "Invalid session" }, 401);
     }
 
+    const requestBody = await req.json();
+    const checkOnly = requestBody?.checkOnly === true;
+    const resumeExistingAccount = requestBody?.resumeExistingAccount === true;
+
     const secretKey = getSecretKey();
 
     if (!secretKey) {
@@ -207,6 +211,19 @@ Deno.serve(async (req) => {
 
     const profiles = await profileResponse.json();
     let accountId = profiles?.[0]?.stripe_account_id ?? null;
+    const hasExistingAccount = Boolean(accountId);
+
+    if (!accountId && resumeExistingAccount) {
+      return json({
+        connected: false,
+        status: "setup_required",
+        error: "No existing Stripe account is linked to this seller. Start Stripe setup from My Market first.",
+      });
+    }
+
+    if (!accountId && checkOnly) {
+      return json({ connected: false, status: "setup_required" });
+    }
 
     // Create Express Connect account when needed.
     if (!accountId) {
@@ -289,45 +306,36 @@ Deno.serve(async (req) => {
       stripeSecretKey,
     );
 
-    console.log("STRIPE_STATUS", {
-    accountId,
-    charges_enabled: account.charges_enabled,
-    payouts_enabled: account.payouts_enabled,
-    details_submitted: account.details_submitted,
-    requirements: account.requirements,
-  });
-
-  console.log("STRIPE_DUE", JSON.stringify({
-    charges_enabled: account.charges_enabled,
-    payouts_enabled: account.payouts_enabled,
-    details_submitted: account.details_submitted,
-    currently_due: account.requirements?.currently_due,
-    past_due: account.requirements?.past_due,
-    pending_verification: account.requirements?.pending_verification,
-    disabled_reason: account.requirements?.disabled_reason,
-  }));
-
-  const accountV2 = await stripeGet(
-    `/v2/core/accounts/${encodeURIComponent(accountId)}?include=configuration.merchant&include=requirements`,
+    const accountV2 = await stripeGet(
+      `/v2/core/accounts/${encodeURIComponent(accountId)}?include=configuration.merchant&include=configuration.recipient&include=requirements`,
     stripeSecretKey,
   );
 
   const cardPaymentsStatus =
     accountV2?.configuration?.merchant?.capabilities?.card_payments?.status;
 
-  const payoutsStatus =
-    accountV2?.configuration?.merchant?.capabilities?.stripe_balance?.payouts?.status;
+    const transfersStatus =
+      accountV2?.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers?.status;
+    const transfersReady =
+      transfersStatus === "active" || account.capabilities?.transfers === "active";
 
-  console.log("V2_CAPABILITY_STATUS", {
-    accountId,
-    cardPaymentsStatus,
-    payoutsStatus,
-  });
-  console.log("V2_REQUIREMENTS", JSON.stringify(accountV2?.requirements?.entries ?? [], null, 2));
-
-  if (cardPaymentsStatus === "active" && payoutsStatus === "active") {
+    if (
+      cardPaymentsStatus === "active" &&
+      transfersReady &&
+      account.charges_enabled === true &&
+    account.payouts_enabled === true
+  ) {
     return json({
       connected: true,
+      status: "connected",
+      accountId,
+    });
+  }
+
+  if (checkOnly) {
+    return json({
+      connected: false,
+      status: hasExistingAccount ? "setup_incomplete" : "setup_required",
       accountId,
     });
   }
@@ -358,6 +366,7 @@ Deno.serve(async (req) => {
 
     return json({
       connected: false,
+      status: hasExistingAccount ? "setup_incomplete" : "setup_required",
       accountId,
       onboardingUrl: accountLink.url,
     });

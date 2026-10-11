@@ -340,20 +340,118 @@ useEffect(() => {
 
 useEffect(() => {
   let active = true;
-  const showCheckoutReturnMessage = (url: string | null) => {
+  const processedConnectCallbacks = new Set<string>();
+  const handleConnectReturn = async (connectState: "refresh" | "complete") => {
+    try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!sessionData.session?.user) {
+        Alert.alert("Sign in required", "Sign in to continue Stripe setup.");
+        return;
+      }
+
+      if (connectState === "refresh") {
+        const { data, error } = await supabase.functions.invoke(
+          "create-connect-account",
+          { body: { resumeExistingAccount: true } },
+        );
+        if (error) throw error;
+
+        if (data?.status === "setup_required") {
+          setStripeStatus("setup_required");
+          Alert.alert(
+            "Stripe setup required",
+            data.error || "No existing Stripe account is linked to this seller.",
+          );
+          return;
+        }
+        if (data?.status === "connected" || data?.connected) {
+          setStripeStatus("connected");
+          Alert.alert("Stripe connected", "Your Stripe payments account is ready.");
+          return;
+        }
+        if (data?.status !== "setup_incomplete" || !data?.onboardingUrl) {
+          throw new Error(data?.error || "Stripe onboarding link was not returned.");
+        }
+
+        setStripeStatus("setup_incomplete");
+        await Linking.openURL(data.onboardingUrl);
+        return;
+      }
+
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("id,full_name,email,avatar_url,role")
+        .eq("id", sessionData.session.user.id)
+        .maybeSingle();
+      if (profileError) throw profileError;
+      if (!profileData) throw new Error("Seller profile could not be refreshed.");
+
+      const { data, error } = await supabase.functions.invoke(
+        "create-connect-account",
+        { body: { checkOnly: true } },
+      );
+      if (error) throw error;
+      if (
+        data?.status !== "connected" &&
+        data?.status !== "setup_required" &&
+        data?.status !== "setup_incomplete"
+      ) {
+        throw new Error("Stripe readiness status was not returned.");
+      }
+
+      if (!active) return;
+      setProfile(profileData as Profile);
+      setStripeStatus(data.status);
+      if (data.status === "connected") {
+        Alert.alert("Stripe setup complete", "Your Stripe payments account is ready.");
+      } else {
+        Alert.alert(
+          "Stripe setup still needed",
+          "Stripe reports that onboarding is not complete yet. Finish the remaining requirements to enable payments.",
+        );
+      }
+    } catch (error) {
+      if (!active) return;
+      console.error("Unable to process Stripe Connect return:", error);
+      Alert.alert(
+        connectState === "refresh" ? "Stripe setup failed" : "Unable to verify Stripe setup",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
+  };
+  const handleIncomingUrl = (url: string | null) => {
     if (!url) return;
-    const paymentStatus = new URL(url).searchParams.get("payment");
+    const parsedUrl = new URL(url);
+    const paymentStatus = parsedUrl.searchParams.get("payment");
     if (paymentStatus === "success") {
       Alert.alert("Payment processing", "Stripe is confirming your payment. Your purchase will show as paid after server verification.");
     } else if (paymentStatus === "cancelled") {
       Alert.alert("Checkout cancelled", "No payment was confirmed. Your reservation remains in My Purchases while the Checkout session is active.");
     }
+
+    const connectState = parsedUrl.searchParams.get("connect");
+    if (connectState !== "refresh" && connectState !== "complete") return;
+
+    const callbackKey = `${parsedUrl.origin}${parsedUrl.pathname}:${connectState}`;
+    if (processedConnectCallbacks.has(callbackKey)) return;
+    processedConnectCallbacks.add(callbackKey);
+
+    parsedUrl.searchParams.delete("connect");
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      window.history.replaceState(
+        null,
+        "",
+        `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`,
+      );
+    }
+    void handleConnectReturn(connectState);
   };
 
   void Linking.getInitialURL().then((url) => {
-    if (active) showCheckoutReturnMessage(url);
+    if (active) handleIncomingUrl(url);
   });
-  const subscription = Linking.addEventListener("url", ({ url }) => showCheckoutReturnMessage(url));
+  const subscription = Linking.addEventListener("url", ({ url }) => handleIncomingUrl(url));
   return () => {
     active = false;
     subscription.remove();
