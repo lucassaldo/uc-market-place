@@ -263,6 +263,8 @@ const [marketSection, setMarketSection] = useState<
  const [messageSending, setMessageSending] = useState(false);
  const [purchaseLoading, setPurchaseLoading] = useState(false);
  const [purchaseError, setPurchaseError] = useState("");
+ const [checkoutError, setCheckoutError] = useState<{ purchaseId: string; message: string } | null>(null);
+ const checkoutInFlight = useRef(new Set<string>());
  const [purchaseRequestIds, setPurchaseRequestIds] = useState<Set<string>>(new Set());
  const [showConversations, setShowConversations] = useState(false);
  const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -320,6 +322,7 @@ const [marketSection, setMarketSection] = useState<
    setPublishLoading(false);
    setModerationLoading(false);
    setPurchaseActionLoading(null);
+   setCheckoutError(null);
    setListingError("");
    setMyMarketError("");
    setPurchaseError("");
@@ -678,16 +681,33 @@ const toggleFavorite = async (listing: Listing) => {
 
 
   const payForPurchase = async (purchase: Purchase) => {
-    if (!authUser || purchase.buyer_id !== authUser.id || purchase.status !== "accepted") return;
+    if (!authUser) {
+      setCheckoutError({
+        purchaseId: purchase.id,
+        message: "Your session has expired. Sign in again before starting Checkout.",
+      });
+      return;
+    }
+    if (purchase.buyer_id !== authUser.id || purchase.status !== "accepted") {
+      setCheckoutError({
+        purchaseId: purchase.id,
+        message: "This purchase is no longer available to your account. Refresh My Purchases and try again.",
+      });
+      return;
+    }
+    const checkoutKey = `${authUser.id}:${purchase.id}`;
+    if (checkoutInFlight.current.has(checkoutKey)) return;
+    checkoutInFlight.current.add(checkoutKey);
     const sessionVersion = accountSessionVersion.current;
     const isCurrentSession = () =>
       sessionVersion === accountSessionVersion.current &&
       previousAuthUserId.current === authUser.id;
 
     try {
+      setCheckoutError(null);
       setPurchaseActionLoading(purchase.id);
 
-      const { data, error } = await supabase.functions.invoke(
+      const { data, error, response } = await supabase.functions.invoke(
         "create-checkout-session",
         {
           body: { purchaseId: purchase.id },
@@ -695,7 +715,16 @@ const toggleFavorite = async (listing: Listing) => {
       );
       if (!isCurrentSession()) return;
 
-      if (error) throw error;
+      if (error) {
+        const responseBody = response
+          ? await response.clone().json().catch(() => null)
+          : null;
+        throw new Error(
+          typeof responseBody?.error === "string"
+            ? responseBody.error
+            : error.message || "Unable to create secure Checkout.",
+        );
+      }
 
       if (!data?.url) {
         throw new Error(
@@ -709,16 +738,23 @@ const toggleFavorite = async (listing: Listing) => {
         );
         setPurchases(updateSession);
       }
-      await Linking.openURL(data.url);
+      if (Platform.OS === "web") {
+        if (typeof window === "undefined") {
+          throw new Error("Checkout cannot be opened in this browser.");
+        }
+        window.location.assign(data.url);
+      } else {
+        await Linking.openURL(data.url);
+      }
     } catch (error) {
       if (!isCurrentSession()) return;
-      Alert.alert(
-        "Payment failed",
-        error instanceof Error
-          ? error.message
-          : "Unable to start payment.",
-      );
+      const message = error instanceof Error
+        ? error.message
+        : "Unable to start secure Checkout. Please try again.";
+      setCheckoutError({ purchaseId: purchase.id, message });
+      if (Platform.OS !== "web") Alert.alert("Payment failed", message);
     } finally {
+      checkoutInFlight.current.delete(checkoutKey);
       if (isCurrentSession()) setPurchaseActionLoading(null);
     }
   };
@@ -2042,12 +2078,19 @@ const toggleFavorite = async (listing: Listing) => {
                       <View style={styles.detailPurchaseActions}>
                         <Text style={styles.contactHint}>Accepted / Reserved for you. Choose a payment option:</Text>
                         <TouchableOpacity
-                          style={[styles.purchaseAcceptButton, styles.detailPurchaseButton]}
+                          style={[styles.purchaseAcceptButton, styles.detailPurchaseButton, purchaseActionLoading === selectedPurchase.id && styles.disabledButton]}
                           disabled={purchaseActionLoading === selectedPurchase.id}
                           onPress={() => void payForPurchase(selectedPurchase)}
                         >
-                          <Text style={styles.purchaseAcceptText}>Pay securely online</Text>
+                          <Text style={styles.purchaseAcceptText}>
+                            {purchaseActionLoading === selectedPurchase.id ? "Opening..." : "Pay securely online"}
+                          </Text>
                         </TouchableOpacity>
+                        {checkoutError?.purchaseId === selectedPurchase.id ? (
+                          <Text accessibilityRole="alert" style={styles.checkoutError}>
+                            {checkoutError.message}
+                          </Text>
+                        ) : null}
                         <TouchableOpacity
                           style={[styles.purchaseCashButton, styles.detailPurchaseButton, selectedPurchase.stripe_checkout_session_id && styles.disabledButton]}
                           disabled={Boolean(selectedPurchase.stripe_checkout_session_id) || purchaseActionLoading === selectedPurchase.id}
@@ -2390,7 +2433,7 @@ const toggleFavorite = async (listing: Listing) => {
                     {purchase.status === "accepted" ? (
                       <View style={styles.purchaseActions}>
                         <TouchableOpacity
-                          style={styles.purchaseAcceptButton}
+                          style={[styles.purchaseAcceptButton, purchaseActionLoading === purchase.id && styles.disabledButton]}
                           disabled={purchaseActionLoading === purchase.id}
                           onPress={() => void payForPurchase(purchase)}
                         >
@@ -2398,6 +2441,11 @@ const toggleFavorite = async (listing: Listing) => {
                             {purchaseActionLoading === purchase.id ? "Opening..." : "Pay securely online"}
                           </Text>
                         </TouchableOpacity>
+                        {checkoutError?.purchaseId === purchase.id ? (
+                          <Text accessibilityRole="alert" style={styles.checkoutError}>
+                            {checkoutError.message}
+                          </Text>
+                        ) : null}
                         <TouchableOpacity
                           style={[styles.purchaseCashButton, (purchase.stripe_checkout_session_id || purchaseActionLoading === purchase.id) && styles.disabledButton]}
                           disabled={Boolean(purchase.stripe_checkout_session_id) || purchaseActionLoading === purchase.id}
@@ -2803,6 +2851,18 @@ const styles = StyleSheet.create({
     marginTop: 12,
     textAlign: "center",
     fontSize: 14,
+  },
+
+  checkoutError: {
+    color: "#8F2028",
+    backgroundColor: "#FCEDEE",
+    borderWidth: 1,
+    borderColor: "#F0C9CC",
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
   },
 
   switchText: {
