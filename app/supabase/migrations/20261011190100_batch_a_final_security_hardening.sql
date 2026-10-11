@@ -1,5 +1,43 @@
 do $$
 declare
+  listing_column record;
+begin
+  for listing_column in
+    select attname
+    from pg_attribute
+    where attrelid = 'public.listings'::regclass
+      and attnum > 0
+      and not attisdropped
+  loop
+    execute format(
+      'revoke select (%I) on table public.listings from public, anon, authenticated',
+      listing_column.attname
+    );
+  end loop;
+end;
+$$;
+
+revoke select on table public.listings from public, anon, authenticated;
+
+grant select (
+  id,
+  title,
+  description,
+  category,
+  seller_id,
+  price,
+  image,
+  image_url,
+  images,
+  status,
+  created_at,
+  removed_at
+) on table public.listings to authenticated;
+
+grant select on table public.listings to service_role;
+
+do $$
+declare
   policy_record record;
 begin
   for policy_record in
