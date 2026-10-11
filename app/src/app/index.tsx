@@ -147,6 +147,44 @@ const purchaseStatusLabel = (purchase: Purchase) => {
   return purchase.status;
 };
 
+type PatriotCharacterProps = {
+  className: "seller" | "handshake" | "package";
+  position: "Seller" | "HandshakeLeft" | "HandshakeRight" | "Package" | "MobileHandshakeLeft" | "MobileHandshakeRight";
+};
+
+const PatriotCharacter = ({ className, position }: PatriotCharacterProps) => (
+  <View style={[styles.heroPatriot, styles[`heroPatriot${position}`]]}>
+    <View style={styles.heroPatriotShadow} />
+    <View style={styles.heroPatriotHat}>
+      <View style={styles.heroPatriotHatCrown} />
+      <View style={styles.heroPatriotHatBrim} />
+      <View style={styles.heroPatriotFeather} />
+    </View>
+    <View style={styles.heroPatriotHead}>
+      <View style={styles.heroPatriotHair} />
+      <View style={styles.heroPatriotBrow} />
+      <View style={styles.heroPatriotEyeLeft} />
+      <View style={styles.heroPatriotEyeRight} />
+      <View style={styles.heroPatriotNose} />
+      <View style={styles.heroPatriotChin} />
+      <View style={styles.heroPatriotSmile} />
+    </View>
+    <View style={styles.heroPatriotTorso}>
+      <View style={styles.heroPatriotCollar} />
+      <View style={styles.heroPatriotVest} />
+      <View style={styles.heroPatriotButton} />
+      <View style={styles.heroPatriotButtonLower} />
+    </View>
+    <View style={[styles.heroPatriotArm, styles.heroPatriotArmLeft, className === "handshake" && styles.heroPatriotArmExtended]} />
+    <View style={[styles.heroPatriotArm, styles.heroPatriotArmRight, className === "handshake" && styles.heroPatriotArmExtendedRight]} />
+    {className === "package" ? <View style={styles.heroPatriotPackageItem}><Text style={styles.heroPackageMark}>UC</Text></View> : null}
+    <View style={styles.heroPatriotLegLeft} />
+    <View style={styles.heroPatriotLegRight} />
+    <View style={styles.heroPatriotBootLeft} />
+    <View style={styles.heroPatriotBootRight} />
+  </View>
+);
+
 const fetchListingsWithProfiles = async (includeRemoved = false): Promise<Listing[]> => {
   let listingQuery = supabase
     .from("listings")
@@ -1534,7 +1572,6 @@ const toggleFavorite = async (listing: Listing) => {
   if (!loggedIn) {
     return (
       <SafeAreaView style={styles.container}>
-        <View pointerEvents="none" style={styles.backgroundGlow} />
         <ScrollView contentContainerStyle={styles.loginContainer} keyboardShouldPersistTaps="handled">
           <View style={[styles.loginLayout, width < 960 && styles.loginLayoutCompact]}>
             <View style={[styles.loginImagePlaceholder, width < 960 && styles.loginImagePlaceholderCompact]}>
@@ -1630,8 +1667,7 @@ const toggleFavorite = async (listing: Listing) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View pointerEvents="none" style={styles.backgroundGlow} />
-      <ScrollView contentContainerStyle={styles.pageContent}>
+      <ScrollView>
         <View style={styles.header}>
           <Text style={styles.logoSmall}>UC MARKET</Text>
 
@@ -1661,21 +1697,50 @@ const toggleFavorite = async (listing: Listing) => {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.hero}>
-          <View style={[styles.campusBanner, isMobileHero && styles.campusBannerCompact]}>
-            <Image
-              source={require("../../assets/images/WhatsApp Image 2026-10-04 at 17.59.25.jpeg")}
-              style={styles.campusBannerImage}
-              resizeMode="cover"
-              accessibilityLabel="University of the Cumberlands — Buy, Sell, Connect"
-            />
-            <View style={styles.campusBannerCaption}>
-              <Text style={styles.campusBannerEyebrow}>UC CAMPUS EXCHANGE</Text>
-              {!isMobileHero ? (
-                <Text style={styles.campusBannerText}>A marketplace made for campus life.</Text>
-              ) : null}
+        <View style={[styles.hero, { display: "none" }]}>
+          <View style={[styles.heroVisual, isMobileHero && styles.mobileHeroVisual]}>
+            <View style={styles.heroSky} />
+            <View style={styles.heroHorizon} />
+            <View style={styles.heroGround} />
+            <View style={styles.heroWalkway} />
+            <View style={styles.heroTower}>
+              <View style={styles.heroTowerRoof} />
+              <View style={styles.heroTowerBody}><View style={styles.heroTowerWindow} /></View>
+            </View>
+            {!isMobileHero ? <>
+              <View style={styles.heroBuildingOne}><View style={styles.heroBuildingRoof} /><View style={styles.heroBuildingWindow} /></View>
+              <View style={styles.heroBuildingTwo}><View style={styles.heroBuildingRoof} /><View style={styles.heroBuildingWindow} /></View>
+              <View style={styles.heroHome}><Text style={styles.heroHomeText}>HOME</Text><Text style={styles.heroHomeMark}>UC</Text><View style={styles.heroHomeBase} /></View>
+            </> : null}
+            <View style={styles.heroGlobe}>
+              <View style={styles.heroGlobeLatitude} />
+              <View style={styles.heroGlobeLongitude} />
+              <View style={styles.heroGlobeStand} />
+            </View>
+            <View style={styles.heroBridge}>
+              <View style={styles.heroBridgeDeck} /><View style={styles.heroBridgeArch} /><View style={styles.heroBridgeRail} />
+            </View>
+            <Text style={isMobileHero ? styles.heroMobileEyebrow : styles.heroEyebrow}>UC CAMPUS EXCHANGE</Text>
+            <Text style={isMobileHero ? styles.heroMobileWelcome : styles.heroWelcome}>Welcome, Patriots!</Text>
+            <Text style={isMobileHero ? styles.heroMobileTitle : styles.heroTitle}>Buy. Sell. Connect.</Text>
+            {!isMobileHero ? <Text style={styles.heroNote}>A student marketplace built around campus life.</Text> : null}
+            <View style={isMobileHero ? styles.heroMobileBooth : styles.heroBooth}>
+              <View style={styles.heroBoothCanopy}><Text style={styles.heroBoothLabel}>PATRIOT MARKET</Text></View>
+              <View style={styles.heroBoothCounter}><View style={styles.heroProductBook} /><View style={styles.heroProductDevice} /><View style={styles.heroProductPackage} /></View>
+            </View>
+            <View style={styles.heroCharacters}>
+              {isMobileHero ? <>
+                <PatriotCharacter className="handshake" position="MobileHandshakeLeft" />
+                <PatriotCharacter className="handshake" position="MobileHandshakeRight" />
+              </> : <>
+                <PatriotCharacter className="seller" position="Seller" />
+                <PatriotCharacter className="handshake" position="HandshakeLeft" />
+                <PatriotCharacter className="handshake" position="HandshakeRight" />
+                <PatriotCharacter className="package" position="Package" />
+              </>}
             </View>
           </View>
+
           <TextInput
             style={styles.search}
             placeholder="🔎  Search items, food, services..."
@@ -1684,12 +1749,8 @@ const toggleFavorite = async (listing: Listing) => {
           />
         </View>
 
-        <View style={styles.marketHeading}>
-          <Text style={styles.marketTitle}>Find something great.</Text>
-          <Text style={styles.marketSubtitle}>Shop, sell, and connect with your campus community.</Text>
-        </View>
 
-        <View style={styles.marketControls}>
+        <View style={{ gap: 8, marginBottom: 12 }}>
   <TouchableOpacity
     style={styles.filterOption}
     onPress={() => setShowCategoryMenu(!showCategoryMenu)}
@@ -1778,7 +1839,6 @@ const toggleFavorite = async (listing: Listing) => {
 </View>
 <ScrollView
   horizontal
-  style={styles.marketNavigation}
   showsHorizontalScrollIndicator={false}
   contentContainerStyle={{ gap: 10, paddingVertical: 12 }}
 >
@@ -1853,12 +1913,12 @@ const toggleFavorite = async (listing: Listing) => {
             .map((item) => (
               <TouchableOpacity
                 key={item.id ?? item.title}
-                style={[styles.card, width < 520 && styles.cardCompact]}
+                style={styles.card}
                 onPress={() => openListingDetails(item)}
               >
-                <View style={[styles.iconBox, width < 520 && styles.iconBoxCompact]}>
+                <View style={styles.iconBox}>
                   {listingImageUrl(item.image_url || item.image) ? (
-                    <Image source={{ uri: listingImageUrl(item.image_url || item.image)! }} style={[styles.cardImage, width < 520 && styles.cardImageCompact]} />
+                    <Image source={{ uri: listingImageUrl(item.image_url || item.image)! }} style={styles.cardImage} />
                   ) : item.emoji ? (
                     <Text style={styles.emoji}>{item.emoji}</Text>
                   ) : (
@@ -1877,12 +1937,12 @@ const toggleFavorite = async (listing: Listing) => {
                 </View>
 
                 {listingImageUrl(getProfile(item)?.avatar_url) ? (
-                  <Image source={{ uri: listingImageUrl(getProfile(item)?.avatar_url)! }} style={[styles.cardAvatar, width < 520 && styles.cardAvatarCompact]} />
+                  <Image source={{ uri: listingImageUrl(getProfile(item)?.avatar_url)! }} style={styles.cardAvatar} />
                 ) : (
-                  <View style={[styles.cardAvatarPlaceholder, width < 520 && styles.cardAvatarCompact]}><Text style={styles.cardAvatarText}>UC</Text></View>
+                  <View style={styles.cardAvatarPlaceholder}><Text style={styles.cardAvatarText}>UC</Text></View>
                 )}
 
-                <Text style={[styles.price, width < 520 && styles.priceCompact]}>{item.price}</Text>
+                <Text style={styles.price}>{item.price}</Text>
                 {item.seller_id !== authUser?.id ? (
                   <TouchableOpacity
                     disabled={favoriteLoadingIds.has(String(item.id))}
@@ -2520,61 +2580,43 @@ const toggleFavorite = async (listing: Listing) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F4F1",
-  },
-
-  backgroundGlow: {
-    position: "absolute",
-    top: -150,
-    right: -110,
-    width: 340,
-    height: 340,
-    borderRadius: 170,
-    backgroundColor: "#E7EAF0",
-    opacity: 0.65,
+    backgroundColor: "#F8F5EF",
   },
 
   loginContainer: {
     flexGrow: 1,
     justifyContent: "center",
-    paddingHorizontal: 28,
-    paddingVertical: 40,
+    paddingHorizontal: 20,
+    paddingVertical: 28,
   },
 
   loginLayout: {
     width: "100%",
-    maxWidth: 1240,
+    maxWidth: 1480,
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 32,
+    gap: 28,
   },
 
   loginLayoutCompact: {
     flexDirection: "column",
-    gap: 28,
+    gap: 20,
   },
 
   loginImagePlaceholder: {
-    width: "56%",
-    maxWidth: 760,
+    width: "58%",
+    maxWidth: 900,
     aspectRatio: 1600 / 600,
-    borderRadius: 18,
+    borderRadius: 8,
     overflow: "hidden",
     backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E6E4DF",
-    shadowColor: "#17243A",
-    shadowOpacity: 0.12,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 4,
   },
 
   loginImagePlaceholderCompact: {
     width: "100%",
-    maxWidth: 760,
+    maxWidth: 900,
   },
 
   loginArtwork: {
@@ -2592,29 +2634,12 @@ const styles = StyleSheet.create({
 
   loginForm: {
     width: "36%",
-    maxWidth: 400,
+    maxWidth: 440,
     alignSelf: "center",
-    backgroundColor: "rgba(255,255,255,0.94)",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#E7E4DE",
-    padding: 30,
-    shadowColor: "#17243A",
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
   },
 
   loginFormCompact: {
     width: "100%",
-    padding: 24,
-  },
-
-  pageContent: {
-    width: "100%",
-    alignItems: "center",
-    paddingBottom: 28,
   },
 
   roleSummary: {
@@ -2716,21 +2741,18 @@ const styles = StyleSheet.create({
   },
 
   logo: {
-    fontSize: 34,
+    fontSize: 38,
     fontWeight: "800",
     color: "#7A1530",
     textAlign: "center",
-    letterSpacing: 1.2,
   },
 
   tagline: {
     textAlign: "center",
-    color: "#69717D",
-    fontSize: 14,
-    fontWeight: "600",
-    marginTop: 5,
-    marginBottom: 36,
-    letterSpacing: 0.4,
+    color: "#777",
+    fontSize: 16,
+    marginTop: 8,
+    marginBottom: 55,
   },
 
   title: {
@@ -2749,19 +2771,18 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#D9DDE3",
-    borderRadius: 10,
+    borderColor: "#DDD",
+    borderRadius: 12,
     paddingHorizontal: 16,
-    height: 50,
+    height: 52,
     marginBottom: 14,
     fontSize: 16,
-    color: "#202936",
   },
 
   primaryButton: {
     backgroundColor: "#7A1530",
-    height: 52,
-    borderRadius: 10,
+    height: 54,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 8,
@@ -2792,39 +2813,24 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    width: "100%",
-    maxWidth: 1120,
-    alignSelf: "center",
     paddingHorizontal: 24,
     paddingTop: 18,
-    paddingBottom: 12,
+    paddingBottom: 10,
     flexDirection: "row",
-    justifyContent: "flex-start",
+    justifyContent: "space-between",
     alignItems: "center",
-    flexWrap: "wrap",
-    columnGap: 24,
-    rowGap: 10,
   },
 
   profileBar: {
-    width: "92%",
-    maxWidth: 1072,
-    alignSelf: "center",
+    marginHorizontal: 24,
     marginTop: 4,
-    padding: 13,
-    borderRadius: 12,
+    padding: 12,
+    borderRadius: 16,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#E3E3DF",
+    borderColor: "#E6E2DB",
     flexDirection: "row",
     alignItems: "center",
-    flexWrap: "wrap",
-    gap: 10,
-    shadowColor: "#17243A",
-    shadowOpacity: 0.035,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
   },
 
   profileAvatar: {
@@ -2850,8 +2856,7 @@ const styles = StyleSheet.create({
 
   profileCopy: {
     flex: 1,
-    marginLeft: 2,
-    minWidth: 100,
+    marginLeft: 11,
   },
 
   profileGreeting: {
@@ -2868,11 +2873,10 @@ const styles = StyleSheet.create({
 
   profilePhotoButton: {
     borderWidth: 1,
-    borderColor: "#D8C5CA",
-    borderRadius: 8,
+    borderColor: "#7A1530",
+    borderRadius: 10,
     paddingHorizontal: 10,
-    paddingVertical: 9,
-    backgroundColor: "#FCF9FA",
+    paddingVertical: 8,
   },
 
   profilePhotoButtonText: {
@@ -2882,114 +2886,18 @@ const styles = StyleSheet.create({
   },
 
   logoSmall: {
-    fontSize: 21,
+    fontSize: 22,
     fontWeight: "800",
     color: "#7A1530",
-    letterSpacing: 0.7,
   },
 
   logout: {
-    color: "#465365",
-    fontWeight: "700",
-    paddingVertical: 8,
-    paddingHorizontal: 2,
+    color: "#7A1530",
+    fontWeight: "600",
   },
 
   hero: {
-    width: "100%",
-    maxWidth: 1120,
-    alignSelf: "center",
-    paddingHorizontal: 24,
-    paddingTop: 22,
-    paddingBottom: 8,
-    gap: 16,
-  },
-
-  campusBanner: {
-    width: "100%",
-    height: 216,
-    overflow: "hidden",
-    borderRadius: 16,
-    backgroundColor: "#173B6C",
-    position: "relative",
-    borderWidth: 1,
-    borderColor: "#D8DCE2",
-    shadowColor: "#17243A",
-    shadowOpacity: 0.11,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
-  },
-
-  campusBannerCompact: {
-    height: 142,
-    borderRadius: 12,
-  },
-
-  campusBannerImage: {
-    width: "100%",
-    height: "100%",
-  },
-
-  campusBannerCaption: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    backgroundColor: "rgba(12, 34, 64, 0.76)",
-  },
-
-  campusBannerEyebrow: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.1,
-  },
-
-  campusBannerText: {
-    color: "#E8EDF4",
-    fontSize: 13,
-    marginTop: 3,
-  },
-
-  marketHeading: {
-    width: "100%",
-    maxWidth: 1072,
-    alignSelf: "center",
-    paddingHorizontal: 24,
-    paddingTop: 10,
-    paddingBottom: 2,
-  },
-
-  marketTitle: {
-    color: "#202936",
-    fontSize: 25,
-    fontWeight: "800",
-    letterSpacing: -0.4,
-  },
-
-  marketSubtitle: {
-    color: "#647080",
-    fontSize: 14,
-    marginTop: 4,
-  },
-
-  marketControls: {
-    width: "100%",
-    maxWidth: 1072,
-    alignSelf: "center",
-    gap: 8,
-    marginBottom: 12,
-    paddingHorizontal: 24,
-  },
-
-  marketNavigation: {
-    width: "100%",
-    maxWidth: 1120,
-    alignSelf: "center",
-    paddingHorizontal: 14,
+    padding: 24,
   },
 
   legacyHeroVisual: {
@@ -3797,18 +3705,12 @@ const styles = StyleSheet.create({
 
   search: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 10,
+    borderRadius: 14,
     height: 52,
     paddingHorizontal: 18,
     fontSize: 15,
     borderWidth: 1,
-    borderColor: "#DDE0E4",
-    color: "#202936",
-    shadowColor: "#17243A",
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 1,
+    borderColor: "#E1DDD5",
   },
 
   sectionTitle: {
@@ -3856,11 +3758,11 @@ const styles = StyleSheet.create({
   },
 
   filterOption: {
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    borderRadius: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 9,
     borderWidth: 1,
-    borderColor: "#D9DDE2",
+    borderColor: "#DDD",
     backgroundColor: "#FFFFFF",
   },
 
@@ -3870,9 +3772,9 @@ const styles = StyleSheet.create({
   },
 
   filterOptionText: {
-    color: "#465365",
+    color: "#555",
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
   },
 
   filterOptionTextActive: {
@@ -3882,79 +3784,47 @@ const styles = StyleSheet.create({
   },
 
   list: {
-    width: "100%",
-    maxWidth: 1120,
-    alignSelf: "center",
     paddingHorizontal: 24,
   },
 
   card: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 13,
-    padding: 14,
-    marginBottom: 11,
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#E1E3E5",
-    gap: 12,
-    shadowColor: "#17243A",
-    shadowOpacity: 0.045,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
-  },
-
-  cardCompact: {
-    padding: 10,
-    gap: 8,
-    borderRadius: 11,
+    borderColor: "#E6E2DB",
   },
 
   iconBox: {
-    width: 76,
-    height: 70,
-    borderRadius: 9,
-    backgroundColor: "#F0F1F2",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-
-  iconBoxCompact: {
     width: 58,
     height: 58,
+    borderRadius: 12,
+    backgroundColor: "#F1EEE7",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   cardImage: {
-    width: 76,
-    height: 70,
-    borderRadius: 9,
-  },
-
-  cardImageCompact: {
     width: 58,
     height: 58,
+    borderRadius: 12,
   },
 
   cardAvatar: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    marginLeft: 2,
-  },
-
-  cardAvatarCompact: {
-    width: 23,
-    height: 23,
-    borderRadius: 12,
+    marginLeft: 8,
   },
 
   cardAvatarPlaceholder: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    marginLeft: 2,
+    marginLeft: 8,
     backgroundColor: "#DCE7F5",
     alignItems: "center",
     justifyContent: "center",
@@ -3976,37 +3846,31 @@ const styles = StyleSheet.create({
 
   cardInfo: {
     flex: 1,
-    minWidth: 0,
+    marginLeft: 14,
   },
 
   cardTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#202936",
+    color: "#222",
   },
 
   cardCategory: {
-    fontSize: 12,
-    color: "#647080",
-    marginTop: 4,
+    fontSize: 13,
+    color: "#777",
+    marginTop: 3,
   },
 
   seller: {
     fontSize: 12,
-    color: "#697482",
-    marginTop: 5,
+    color: "#999",
+    marginTop: 4,
   },
 
   price: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "800",
     color: "#7A1530",
-    marginLeft: 4,
-  },
-
-  priceCompact: {
-    fontSize: 15,
-    marginLeft: 0,
   },
 
   favorite: {
@@ -4049,15 +3913,11 @@ const styles = StyleSheet.create({
 
   detailContainer: {
     flex: 1,
-    backgroundColor: "#F5F4F1",
+    backgroundColor: "#F8F5EF",
   },
 
   detailContent: {
-    width: "100%",
-    maxWidth: 820,
-    alignSelf: "center",
-    paddingHorizontal: 24,
-    paddingTop: 20,
+    padding: 24,
     paddingBottom: 40,
   },
 
@@ -4084,8 +3944,8 @@ const styles = StyleSheet.create({
 
   detailMainImage: {
     width: "100%",
-    height: 320,
-    borderRadius: 14,
+    height: 260,
+    borderRadius: 18,
     backgroundColor: "#F1EEE7",
     resizeMode: "cover",
   },
@@ -4124,9 +3984,9 @@ const styles = StyleSheet.create({
   },
 
   detailTitle: {
-    fontSize: 29,
+    fontSize: 30,
     fontWeight: "800",
-    color: "#202936",
+    color: "#222",
   },
 
   detailCategory: {
@@ -4317,11 +4177,11 @@ const styles = StyleSheet.create({
   },
 
   myMarketContent: {
-    paddingHorizontal: 24,
-    paddingTop: 18,
+    paddingHorizontal: 20,
+    paddingTop: 16,
     paddingBottom: 48,
     width: "100%",
-    maxWidth: 960,
+    maxWidth: 920,
     alignSelf: "center",
   },
 
@@ -4334,27 +4194,22 @@ const styles = StyleSheet.create({
   },
 
   myMarketSection: {
-    color: "#202936",
-    fontSize: 21,
+    color: "#222",
+    fontSize: 20,
     fontWeight: "800",
-    marginTop: 16,
-    marginBottom: 12,
+    marginTop: 14,
+    marginBottom: 10,
   },
 
   myMarketRow: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFFFFF",
-    borderRadius: 11,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E1E3E5",
-    padding: 15,
-    marginBottom: 10,
-    shadowColor: "#17243A",
-    shadowOpacity: 0.035,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 1,
+    borderColor: "#E6E2DB",
+    padding: 14,
+    marginBottom: 9,
   },
 
   myMarketThumbnail: {
