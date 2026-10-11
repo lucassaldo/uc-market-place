@@ -241,12 +241,9 @@ Deno.serve(async (req) => {
 
     return json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Webhook processing failed",
+        error: "Webhook processing failed; Stripe may retry.",
       },
-      400,
+      500,
     );
   }
 });

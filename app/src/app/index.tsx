@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
 Image,
@@ -276,45 +276,121 @@ const [marketSection, setMarketSection] = useState<
  const [moderationTarget, setModerationTarget] = useState<Listing | null>(null);
  const [moderationLoading, setModerationLoading] = useState(false);
  const [stripeStatus, setStripeStatus] = useState<"unknown" | "setup_required" | "setup_incomplete" | "connected">("unknown");
+ const previousAuthUserId = useRef<string | null>(null);
+ const accountSessionVersion = useRef(0);
+ const resetAccountState = useCallback(() => {
+   setProfile(null);
+   setListings([]);
+   setFavorites(new Set());
+   setFavoriteLoadingIds(new Set());
+   setPurchaseRequestIds(new Set());
+   setPurchases([]);
+   setIncomingPurchases([]);
+   setConversations([]);
+   setMarketConversations([]);
+   setConversation(null);
+   setMessages([]);
+   setMessageText("");
+   setSelectedListing(null);
+   setActiveDetailImage(null);
+   setAdminListings([]);
+   setModerationTarget(null);
+   setShowMyMarket(false);
+   setShowConversations(false);
+   setShowEditListing(false);
+   setShowSellForm(false);
+   setDeleteTarget(null);
+   setItemTitle("");
+   setItemPrice("");
+   setItemDescription("");
+   setItemImage("");
+   setItemFiles([]);
+   setEditTitle("");
+   setEditPrice("");
+   setEditDescription("");
+   setEditFiles([]);
+   setStripeStatus("unknown");
+   setLoadingListings(false);
+   setMyMarketLoading(false);
+   setPurchaseLoading(false);
+   setChatLoading(false);
+   setMessageSending(false);
+   setDeleteLoading(false);
+   setEditLoading(false);
+   setPublishLoading(false);
+   setModerationLoading(false);
+   setPurchaseActionLoading(null);
+   setListingError("");
+   setMyMarketError("");
+   setPurchaseError("");
+ }, []);
 useEffect(() => {
-  supabase.auth.getSession().then(({ data }) => {
-    setAuthUser(data.session?.user ?? null);
-    setLoggedIn(Boolean(data.session?.user));
-  });
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    setAuthUser(session?.user ?? null);
-    setLoggedIn(Boolean(session?.user));
-  });
-  return () => data.subscription.unsubscribe();
-}, []);
+ let active = true;
+ const applySession = (session: Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]) => {
+   const nextUser = session?.user ?? null;
+   const nextUserId = nextUser?.id ?? null;
+   if (previousAuthUserId.current !== nextUserId) {
+     accountSessionVersion.current += 1;
+     resetAccountState();
+     previousAuthUserId.current = nextUserId;
+   }
+   setAuthUser(nextUser);
+   setLoggedIn(Boolean(nextUser));
+ };
+ void supabase.auth.getSession().then(({ data, error }) => {
+   if (!active) return;
+   if (error) {
+     console.error("Unable to restore authentication session:", error);
+     return;
+   }
+   applySession(data.session);
+ });
+ const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+   if (!active) return;
+   applySession(session);
+ });
+ return () => {
+   active = false;
+   data.subscription.unsubscribe();
+ };
+}, [resetAccountState]);
 useEffect(() => {
-  if (!authUser) return;
-  const ensureProfileAndLoad = async () => {
-    const { data: existingProfile, error: profileError } = await supabase
-      .from("profiles")
-      .select("id,full_name,email,avatar_url,role")
-      .eq("id", authUser.id)
-      .maybeSingle();
-    if (!profileError && !existingProfile) {
-      await supabase.from("profiles").upsert({
-        id: authUser.id,
+ if (!authUser) return;
+ let active = true;
+ const sessionVersion = accountSessionVersion.current;
+ const isActive = () => active && sessionVersion === accountSessionVersion.current;
+ const ensureProfileAndLoad = async () => {
+   const { data: existingProfile, error: profileError } = await supabase
+     .from("profiles")
+     .select("id,full_name,email,avatar_url,role")
+     .eq("id", authUser.id)
+     .maybeSingle();
+   if (!isActive()) return;
+   if (!profileError && !existingProfile) {
+     await supabase.from("profiles").upsert({
+       id: authUser.id,
         full_name: authUser.user_metadata.full_name || null,
         email: authUser.email || null,
         avatar_url: null,
         role: "student",
       });
+      if (!isActive()) return;
     }
     const { data: currentProfile } = await supabase
       .from("profiles")
       .select("id,full_name,email,avatar_url,role")
       .eq("id", authUser.id)
       .maybeSingle();
+    if (!isActive()) return;
     setProfile((currentProfile as Profile | null) ?? null);
     setLoadingListings(true);
     setListingError("");
     try {
-      setListings(await fetchListingsWithProfiles());
+      const loadedListings = await fetchListingsWithProfiles();
+      if (!isActive()) return;
+      setListings(loadedListings);
     } catch (error) {
+      if (!isActive()) return;
       const message = error instanceof Error ? error.message : "Unable to load listings.";
       setListingError(message);
       Alert.alert("Unable to load listings", message);
@@ -322,6 +398,7 @@ useEffect(() => {
       return;
     }
     const { data: favoriteRows, error: favoriteError } = await supabase.from("favorites").select("listing_id").eq("user_id", authUser.id);
+    if (!isActive()) return;
     if (favoriteError) {
       console.error("Favorite loading failed:", {
         code: favoriteError.code,
@@ -341,6 +418,7 @@ useEffect(() => {
       .select("listing_id,status")
       .eq("buyer_id", authUser.id)
       .in("status", ["pending", "accepted"]);
+    if (!isActive()) return;
     if (purchaseError) {
       Alert.alert("Unable to load purchase requests", purchaseError.message);
     } else {
@@ -351,24 +429,33 @@ useEffect(() => {
       .select("id,listing_id,buyer_id,seller_id,price,status,payment_method,stripe_checkout_session_id,created_at,listing:listings(id,title,description,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
       .or(`buyer_id.eq.${authUser.id},seller_id.eq.${authUser.id}`)
       .order("created_at", { ascending: false });
+    if (!isActive()) return;
     if (purchaseListError) {
       Alert.alert("Unable to load purchase history", purchaseListError.message);
     } else {
       const userPurchases = await attachSellerProfiles(purchaseData ?? []) as Purchase[];
+      if (!isActive()) return;
       setPurchases(userPurchases.filter((purchase) => purchase.buyer_id === authUser.id));
       setIncomingPurchases(userPurchases.filter((purchase) => purchase.seller_id === authUser.id));
     }
-    setLoadingListings(false);
+    if (isActive()) setLoadingListings(false);
   };
   void ensureProfileAndLoad();
+  return () => {
+    active = false;
+  };
 }, [authUser]);
 
 useEffect(() => {
   let active = true;
   const processedConnectCallbacks = new Set<string>();
   const handleConnectReturn = async (connectState: "refresh" | "complete") => {
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      active && sessionVersion === accountSessionVersion.current;
     try {
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (!isCurrentSession()) return;
       if (sessionError) throw sessionError;
       if (!sessionData.session?.user) {
         Alert.alert("Sign in required", "Sign in to continue Stripe setup.");
@@ -380,6 +467,7 @@ useEffect(() => {
           "create-connect-account",
           { body: { resumeExistingAccount: true } },
         );
+        if (!isCurrentSession()) return;
         if (error) throw error;
 
         if (data?.status === "setup_required") {
@@ -409,6 +497,7 @@ useEffect(() => {
         .select("id,full_name,email,avatar_url,role")
         .eq("id", sessionData.session.user.id)
         .maybeSingle();
+      if (!isCurrentSession()) return;
       if (profileError) throw profileError;
       if (!profileData) throw new Error("Seller profile could not be refreshed.");
 
@@ -416,6 +505,7 @@ useEffect(() => {
         "create-connect-account",
         { body: { checkOnly: true } },
       );
+      if (!isCurrentSession()) return;
       if (error) throw error;
       if (
         data?.status !== "connected" &&
@@ -425,7 +515,7 @@ useEffect(() => {
         throw new Error("Stripe readiness status was not returned.");
       }
 
-      if (!active) return;
+      if (!isCurrentSession()) return;
       setProfile(profileData as Profile);
       setStripeStatus(data.status);
       if (data.status === "connected") {
@@ -437,7 +527,7 @@ useEffect(() => {
         );
       }
     } catch (error) {
-      if (!active) return;
+      if (!isCurrentSession()) return;
       console.error("Unable to process Stripe Connect return:", error);
       Alert.alert(
         connectState === "refresh" ? "Stripe setup failed" : "Unable to verify Stripe setup",
@@ -485,17 +575,28 @@ useEffect(() => {
 
 useEffect(() => {
   if (!authUser) return;
+  let active = true;
+  const sessionVersion = accountSessionVersion.current;
   void supabase
     .from("conversations")
     .select("id,listing_id,buyer_id,seller_id,created_at,listing:listings(id,title,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
     .or(`buyer_id.eq.${authUser.id},seller_id.eq.${authUser.id}`)
     .order("created_at", { ascending: false })
     .then(({ data, error }) => {
+      if (!active || sessionVersion !== accountSessionVersion.current) return;
       if (error) Alert.alert("Unable to load messages", error.message);
-      else void attachSellerProfiles(data ?? []).then((records) => setConversations(records as Conversation[])).catch((profileError) => {
+      else void attachSellerProfiles(data ?? []).then((records) => {
+        if (active && sessionVersion === accountSessionVersion.current) {
+          setConversations(records as Conversation[]);
+        }
+      }).catch((profileError) => {
+        if (!active || sessionVersion !== accountSessionVersion.current) return;
         Alert.alert("Unable to load seller details", profileError instanceof Error ? profileError.message : "Please try again.");
       });
     });
+  return () => {
+    active = false;
+  };
 }, [authUser, conversation]);
 
     useEffect(() => {
@@ -538,6 +639,10 @@ const toggleFavorite = async (listing: Listing) => {
       Alert.alert("Your listing", "You cannot save your own listing as a favorite.");
       return;
     }
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
     const key = String(listing.id);
     if (favoriteLoadingIds.has(key)) return;
     const isFavorite = favorites.has(key);
@@ -546,6 +651,7 @@ const toggleFavorite = async (listing: Listing) => {
       const result = isFavorite
         ? await supabase.from("favorites").delete().eq("user_id", authUser.id).eq("listing_id", listing.id)
         : await supabase.from("favorites").insert({ user_id: authUser.id, listing_id: listing.id });
+      if (!isCurrentSession()) return;
       if (result.error) {
         console.error("Favorite update failed:", result.error);
         const message = result.error.code === "42501"
@@ -560,17 +666,23 @@ const toggleFavorite = async (listing: Listing) => {
         return next;
       });
     } finally {
-      setFavoriteLoadingIds((current) => {
-        const next = new Set(current);
-        next.delete(key);
-        return next;
-      });
+      if (isCurrentSession()) {
+        setFavoriteLoadingIds((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      }
     }
   };
 
 
   const payForPurchase = async (purchase: Purchase) => {
     if (!authUser || purchase.buyer_id !== authUser.id || purchase.status !== "accepted") return;
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
 
     try {
       setPurchaseActionLoading(purchase.id);
@@ -581,6 +693,7 @@ const toggleFavorite = async (listing: Listing) => {
           body: { purchaseId: purchase.id },
         },
       );
+      if (!isCurrentSession()) return;
 
       if (error) throw error;
 
@@ -598,6 +711,7 @@ const toggleFavorite = async (listing: Listing) => {
       }
       await Linking.openURL(data.url);
     } catch (error) {
+      if (!isCurrentSession()) return;
       Alert.alert(
         "Payment failed",
         error instanceof Error
@@ -605,7 +719,7 @@ const toggleFavorite = async (listing: Listing) => {
           : "Unable to start payment.",
       );
     } finally {
-      setPurchaseActionLoading(null);
+      if (isCurrentSession()) setPurchaseActionLoading(null);
     }
   };
 
@@ -616,6 +730,10 @@ const toggleFavorite = async (listing: Listing) => {
       Alert.alert("Sign in required", "Sign in to request a purchase.");
       return;
     }
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
     if (listing.id == null) {
       Alert.alert("Purchase unavailable", "This listing is no longer available.");
       return;
@@ -632,6 +750,7 @@ const toggleFavorite = async (listing: Listing) => {
         .eq("buyer_id", authUser.id)
         .in("status", ["pending", "accepted"])
         .limit(1);
+      if (!isCurrentSession()) return;
       if (existingError) throw existingError;
       if (existingRows?.length) {
         setPurchaseRequestIds((current) => new Set(current).add(listingKey));
@@ -644,6 +763,7 @@ const toggleFavorite = async (listing: Listing) => {
         .select("id,seller_id,status,removed_at,price")
         .eq("id", listing.id)
         .maybeSingle();
+      if (!isCurrentSession()) return;
       if (listingError) throw listingError;
       if (
         !freshListing ||
@@ -668,6 +788,7 @@ const toggleFavorite = async (listing: Listing) => {
         status: "pending",
         payment_method: "online",
       }).select("id,listing_id,buyer_id,seller_id,price,status,payment_method,stripe_checkout_session_id,created_at").single();
+      if (!isCurrentSession()) return;
       if (insertError) {
         if (insertError.code === "23505") {
           setPurchaseRequestIds((current) => new Set(current).add(listingKey));
@@ -684,6 +805,7 @@ const toggleFavorite = async (listing: Listing) => {
       await refreshMyPurchases(authUser.id);
       Alert.alert("Purchase request sent", "Purchase request sent — waiting for the seller to accept.");
     } catch (error) {
+      if (!isCurrentSession()) return;
       console.error("Unable to send purchase request", {
         code: typeof error === "object" && error !== null && "code" in error ? error.code : undefined,
         message: error instanceof Error ? error.message : String(error),
@@ -691,7 +813,7 @@ const toggleFavorite = async (listing: Listing) => {
       setPurchaseError("Unable to send your purchase request. Please try again.");
       Alert.alert("Unable to send purchase request", "Please try again.");
     } finally {
-      setPurchaseLoading(false);
+      if (isCurrentSession()) setPurchaseLoading(false);
     }
   };
 
@@ -912,12 +1034,17 @@ const toggleFavorite = async (listing: Listing) => {
       Alert.alert("Not authorized", "Only the listing owner can update this request.");
       return;
     }
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
     setPurchaseActionLoading(purchase.id);
     try {
       const { error } = await supabase.rpc("respond_to_purchase_request", {
         p_purchase_id: purchase.id,
         p_decision: status,
       });
+      if (!isCurrentSession()) return;
       if (error) throw error;
       const updatePurchase = (current: Purchase[]) => current.map((item) => item.id === purchase.id ? { ...item, status } : item);
       setIncomingPurchases(updatePurchase);
@@ -926,7 +1053,9 @@ const toggleFavorite = async (listing: Listing) => {
         setListings((current) => current.map((listing) => listing.id === purchase.listing_id ? { ...listing, status: "Reserved" } : listing));
       }
       await refreshMyPurchases(authUser.id);
+      if (!isCurrentSession()) return;
       await refreshListings();
+      if (!isCurrentSession()) return;
       Alert.alert(
         status === "accepted" ? "Purchase accepted" : "Purchase declined",
         status === "accepted"
@@ -934,60 +1063,80 @@ const toggleFavorite = async (listing: Listing) => {
           : "The request was declined and the listing remains available.",
       );
     } catch (error) {
+      if (!isCurrentSession()) return;
       const message = error instanceof Error ? error.message : "Unable to update purchase request.";
       Alert.alert("Unable to update purchase request", message);
     } finally {
-      setPurchaseActionLoading(null);
+      if (isCurrentSession()) setPurchaseActionLoading(null);
     }
   };
 
   const chooseCashPurchase = async (purchase: Purchase) => {
     if (!authUser || purchase.buyer_id !== authUser.id || purchase.status !== "accepted") return;
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
     setPurchaseActionLoading(purchase.id);
     try {
       const { error } = await supabase.rpc("begin_cash_purchase", {
         p_purchase_id: purchase.id,
       });
+      if (!isCurrentSession()) return;
       if (error) throw error;
       await refreshMyPurchases(authUser.id);
+      if (!isCurrentSession()) return;
       await refreshListings();
     } catch (error) {
+      if (!isCurrentSession()) return;
       Alert.alert(
         "Unable to choose in-person payment",
         error instanceof Error ? error.message : "Please try again.",
       );
     } finally {
-      setPurchaseActionLoading(null);
+      if (isCurrentSession()) setPurchaseActionLoading(null);
     }
   };
 
   const confirmCashPurchase = async (purchase: Purchase) => {
     if (!authUser || purchase.seller_id !== authUser.id || purchase.status !== "cash_pending") return;
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
     setPurchaseActionLoading(purchase.id);
     try {
       const { error } = await supabase.rpc("confirm_cash_purchase", {
         p_purchase_id: purchase.id,
       });
+      if (!isCurrentSession()) return;
       if (error) throw error;
       await refreshMyPurchases(authUser.id);
+      if (!isCurrentSession()) return;
       await refreshListings();
     } catch (error) {
+      if (!isCurrentSession()) return;
       Alert.alert(
         "Unable to confirm in-person payment",
         error instanceof Error ? error.message : "Please try again.",
       );
     } finally {
-      setPurchaseActionLoading(null);
+      if (isCurrentSession()) setPurchaseActionLoading(null);
     }
   };
 
   const cancelPurchaseRequest = async (purchase: Purchase) => {
     if (!authUser || purchase.buyer_id !== authUser.id || purchase.status !== "pending") return;
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
     setPurchaseActionLoading(purchase.id);
     try {
       const { error } = await supabase.rpc("cancel_purchase_request", {
         p_purchase_id: purchase.id,
       });
+      if (!isCurrentSession()) return;
       if (error) throw error;
       setPurchaseRequestIds((current) => {
         const next = new Set(current);
@@ -996,9 +1145,10 @@ const toggleFavorite = async (listing: Listing) => {
       });
       setPurchases((current) => current.map((item) => item.id === purchase.id ? { ...item, status: "cancelled" } : item));
     } catch (error) {
+      if (!isCurrentSession()) return;
       Alert.alert("Unable to cancel request", error instanceof Error ? error.message : "Please try again.");
     } finally {
-      setPurchaseActionLoading(null);
+      if (isCurrentSession()) setPurchaseActionLoading(null);
     }
   };
 
@@ -1038,11 +1188,13 @@ const toggleFavorite = async (listing: Listing) => {
   };
 
   const checkStripeStatus = async () => {
+    const sessionVersion = accountSessionVersion.current;
     try {
       const { data, error } = await supabase.functions.invoke(
         "create-connect-account",
         { body: { checkOnly: true } },
       );
+      if (sessionVersion !== accountSessionVersion.current) return;
       if (error) throw error;
       if (
         data?.status !== "connected" &&
@@ -1053,6 +1205,7 @@ const toggleFavorite = async (listing: Listing) => {
       }
       setStripeStatus(data.status);
     } catch (error) {
+      if (sessionVersion !== accountSessionVersion.current) return;
       setStripeStatus("unknown");
       console.error("Unable to verify Stripe Connect readiness:", error);
       Alert.alert(
@@ -1065,6 +1218,10 @@ const toggleFavorite = async (listing: Listing) => {
   const openMyMarket = async () => {
     const currentUser = authUser ?? (await supabase.auth.getUser()).data.user;
     if (!currentUser) return;
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === currentUser.id;
     setMyMarketLoading(true);
     setMyMarketError("");
     setShowMyMarket(true);
@@ -1074,12 +1231,16 @@ const toggleFavorite = async (listing: Listing) => {
         .select("id,listing_id,buyer_id,seller_id,price,status,payment_method,stripe_checkout_session_id,created_at,listing:listings(id,title,description,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
         .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
         .order("created_at", { ascending: false });
+      if (!isCurrentSession()) return;
       if (error) throw error;
       const records = await attachSellerProfiles(data ?? []) as Purchase[];
+      if (!isCurrentSession()) return;
       setPurchases(records.filter((purchase) => purchase.buyer_id === currentUser.id));
       setIncomingPurchases(records.filter((purchase) => purchase.seller_id === currentUser.id));
       if (profile?.role === "admin") {
-        setAdminListings(await fetchListingsWithProfiles(true));
+        const removedListings = await fetchListingsWithProfiles(true);
+        if (!isCurrentSession()) return;
+        setAdminListings(removedListings);
       } else {
         setAdminListings([]);
       }
@@ -1089,6 +1250,7 @@ const toggleFavorite = async (listing: Listing) => {
         .select("id,listing_id,buyer_id,seller_id,created_at,listing:listings(id,title,category,seller_id,price,image,image_url,images,status,created_at,removed_at)")
         .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
         .order("created_at", { ascending: false });
+      if (!isCurrentSession()) return;
       if (conversationError) throw conversationError;
 
       const conversationsWithPreviews = await Promise.all(
@@ -1104,14 +1266,16 @@ const toggleFavorite = async (listing: Listing) => {
           return { ...item, latest_message: latestMessage as Message | null };
         }),
       );
+      if (!isCurrentSession()) return;
       setMarketConversations(conversationsWithPreviews);
       await checkStripeStatus();
     } catch (error) {
+      if (!isCurrentSession()) return;
       const message = error instanceof Error ? error.message : "Unable to load My Market.";
       setMyMarketError(message);
       Alert.alert("Unable to load My Market", message);
     } finally {
-      setMyMarketLoading(false);
+      if (isCurrentSession()) setMyMarketLoading(false);
     }
   };
 
@@ -1123,6 +1287,7 @@ const toggleFavorite = async (listing: Listing) => {
       .order("created_at", { ascending: false });
     if (error) throw error;
     const records = await attachSellerProfiles(data ?? []) as Purchase[];
+    if (previousAuthUserId.current !== userId) return;
     setPurchases(records.filter((purchase) => purchase.buyer_id === userId));
     setIncomingPurchases(records.filter((purchase) => purchase.seller_id === userId));
     setPurchaseRequestIds(new Set(
@@ -1193,6 +1358,10 @@ const toggleFavorite = async (listing: Listing) => {
       Alert.alert("Sign in required", "Sign in to contact a seller.");
       return;
     }
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
     if (!listing.seller_id || (listing.seller_id === authUser.id && !existingConversation)) {
       Alert.alert(
         listing.seller_id ? "This is your listing" : "Seller unavailable",
@@ -1221,6 +1390,7 @@ const toggleFavorite = async (listing: Listing) => {
           .eq("buyer_id", authUser.id)
           .eq("seller_id", listing.seller_id)
           .maybeSingle();
+        if (!isCurrentSession()) return;
         if (findError) throw findError;
         conversationRecord = buyerConversation as Conversation | null;
       }
@@ -1230,6 +1400,7 @@ const toggleFavorite = async (listing: Listing) => {
           .insert(participantFilter)
           .select("id,listing_id,buyer_id,seller_id,created_at")
           .single();
+        if (!isCurrentSession()) return;
         if (createError) {
           if (createError.code === "23505") {
             const { data: concurrentConversation, error: retryError } = await supabase
@@ -1239,6 +1410,7 @@ const toggleFavorite = async (listing: Listing) => {
               .eq("buyer_id", authUser.id)
               .eq("seller_id", listing.seller_id)
               .single();
+            if (!isCurrentSession()) return;
             if (retryError) throw retryError;
             conversationRecord = concurrentConversation as Conversation;
           } else {
@@ -1256,16 +1428,18 @@ const toggleFavorite = async (listing: Listing) => {
         .select("id,sender_id,body,created_at")
         .eq("conversation_id", conversationRecord.id)
         .order("created_at", { ascending: true });
+      if (!isCurrentSession()) return;
       if (messageError) {
         Alert.alert("Unable to load messages", messageError.message);
         return;
       }
       setMessages((messageData ?? []) as Message[]);
     } catch (error) {
+      if (!isCurrentSession()) return;
       const message = error instanceof Error ? error.message : "Unable to start chat.";
       Alert.alert("Unable to start chat", message);
     } finally {
-      setChatLoading(false);
+      if (isCurrentSession()) setChatLoading(false);
     }
   };
 
@@ -1275,6 +1449,10 @@ const toggleFavorite = async (listing: Listing) => {
       return;
     }
     if (!conversation || !messageText.trim() || messageSending) return;
+    const sessionVersion = accountSessionVersion.current;
+    const isCurrentSession = () =>
+      sessionVersion === accountSessionVersion.current &&
+      previousAuthUserId.current === authUser.id;
     const recipientId =
       conversation.buyer_id === authUser.id ? conversation.seller_id : conversation.buyer_id;
     setMessageSending(true);
@@ -1288,20 +1466,23 @@ const toggleFavorite = async (listing: Listing) => {
           recipient_id: recipientId,
           body: messageText.trim(),
         });
+      if (!isCurrentSession()) return;
       if (error) throw error;
       const { data: refreshedMessages, error: refreshError } = await supabase
         .from("messages")
         .select("id,sender_id,body,created_at")
         .eq("conversation_id", conversation.id)
         .order("created_at", { ascending: true });
+      if (!isCurrentSession()) return;
       if (refreshError) throw refreshError;
       setMessages((refreshedMessages ?? []) as Message[]);
       setMessageText("");
     } catch (error) {
+      if (!isCurrentSession()) return;
       const message = error instanceof Error ? error.message : "Unable to send message.";
       Alert.alert("Unable to send message", message);
     } finally {
-      setMessageSending(false);
+      if (isCurrentSession()) setMessageSending(false);
     }
   };
 
