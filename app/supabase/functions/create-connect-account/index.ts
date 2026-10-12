@@ -64,7 +64,7 @@ async function stripePostV2(
     headers: {
       Authorization: `Bearer ${secretKey}`,
       "Content-Type": "application/json",
-      "Stripe-Version": "2026-08-26.preview",
+      "Stripe-Version": "2026-09-30.preview",
     },
     body: JSON.stringify(body),
   });
@@ -84,7 +84,7 @@ async function stripeGet(path: string, secretKey: string) {
   const response = await fetch(`https://api.stripe.com${path}`, {
     headers: {
       Authorization: `Bearer ${secretKey}`,
-      "Stripe-Version": "2026-08-26.preview",
+      "Stripe-Version": "2026-09-30.preview",
     },
   });
 
@@ -228,53 +228,47 @@ Deno.serve(async (req) => {
     // Create Express Connect account when needed.
     if (!accountId) {
       const accountBody: Record<string, unknown> = {
-      dashboard: "express",
-      identity: {
-        country: "us",
-      },
-      configuration: {
-        merchant: {
-          capabilities: {
-            card_payments: {
-              requested: true,
-            },
-          },
+        dashboard: "express",
+        metadata: {
+          uc_market_charge_model: "direct",
         },
-        recipient: {
-          capabilities: {
-            stripe_balance: {
-              stripe_transfers: {
+        identity: {
+          country: "us",
+        },
+        configuration: {
+          merchant: {
+            capabilities: {
+              card_payments: {
                 requested: true,
               },
             },
           },
         },
-      },
-      defaults: {
-        currency: "usd",
-        responsibilities: {
-          fees_collector: "application",
-          losses_collector: "application",
+        defaults: {
+          currency: "usd",
+          responsibilities: {
+            fees_collector: "stripe",
+            losses_collector: "stripe",
+          },
         },
-      },
-      include: [
-        "configuration.merchant",
-        "configuration.recipient",
-        "requirements",
-      ],
-    };
+        include: [
+          "configuration.merchant",
+          "requirements",
+          "defaults",
+        ],
+      };
 
-    if (user.email) {
-      accountBody.contact_email = user.email;
-    }
+      if (user.email) {
+        accountBody.contact_email = user.email;
+      }
 
-    const account = await stripePostV2(
-      "/v2/core/accounts",
-      stripeSecretKey,
-      accountBody,
-    );
+      const account = await stripePostV2(
+        "/v2/core/accounts",
+        stripeSecretKey,
+        accountBody,
+      );
 
-    accountId = account.id;
+      accountId = account.id;
 
       const updateResponse = await fetch(
         `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(
@@ -307,12 +301,24 @@ Deno.serve(async (req) => {
     );
 
     const accountV2 = await stripeGet(
-      `/v2/core/accounts/${encodeURIComponent(accountId)}?include=configuration.merchant&include=configuration.recipient&include=requirements`,
-    stripeSecretKey,
-  );
+      `/v2/core/accounts/${encodeURIComponent(accountId)}?include=configuration.merchant&include=configuration.recipient&include=requirements&include=defaults`,
+      stripeSecretKey,
+    );
 
-  const cardPaymentsStatus =
-    accountV2?.configuration?.merchant?.capabilities?.card_payments?.status;
+    const cardPaymentsStatus =
+      accountV2?.configuration?.merchant?.capabilities?.card_payments?.status;
+
+    const isDirectChargeAccount =
+      account.metadata?.uc_market_charge_model === "direct";
+    const responsibilities = accountV2?.defaults?.responsibilities;
+    const stripeOwnsFeesAndLosses =
+      responsibilities?.fees_collector === "stripe" &&
+      responsibilities?.losses_collector === "stripe";
+    if (isDirectChargeAccount && !stripeOwnsFeesAndLosses) {
+      throw new Error(
+        "Stripe account is missing Stripe-owned fee and loss responsibility.",
+      );
+    }
 
     const transfersStatus =
       accountV2?.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers?.status;
@@ -321,16 +327,16 @@ Deno.serve(async (req) => {
 
     if (
       cardPaymentsStatus === "active" &&
-      transfersReady &&
+      (isDirectChargeAccount || transfersReady) &&
       account.charges_enabled === true &&
-    account.payouts_enabled === true
-  ) {
-    return json({
-      connected: true,
-      status: "connected",
-      accountId,
-    });
-  }
+      account.payouts_enabled === true
+    ) {
+      return json({
+        connected: true,
+        status: "connected",
+        accountId,
+      });
+    }
 
   if (checkOnly) {
     return json({

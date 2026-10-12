@@ -46,11 +46,13 @@ async function stripePost(
   secretKey: string,
   params: URLSearchParams,
   idempotencyKey?: string,
+  connectedAccountId?: string,
 ) {
   const response = await fetch(`https://api.stripe.com${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${secretKey}`,
+      ...(connectedAccountId ? { "Stripe-Account": connectedAccountId } : {}),
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
       "Content-Type": "application/x-www-form-urlencoded",
     },
@@ -70,9 +72,14 @@ async function stripePost(
   return data;
 }
 
-async function stripeGet(path: string, secretKey: string) {
+async function stripeGet(
+  path: string,
+  secretKey: string,
+  connectedAccountId?: string,
+) {
   const response = await fetch(`https://api.stripe.com${path}`, {
     headers: {
+      ...(connectedAccountId ? { "Stripe-Account": connectedAccountId } : {}),
       Authorization: `Bearer ${secretKey}`,
     },
   });
@@ -87,7 +94,7 @@ async function stripeGetV2(path: string, secretKey: string) {
   const response = await fetch(`https://api.stripe.com${path}`, {
     headers: {
       Authorization: `Bearer ${secretKey}`,
-      "Stripe-Version": "2026-08-26.preview",
+      "Stripe-Version": "2026-09-30.preview",
     },
   });
   const data = await response.json();
@@ -289,9 +296,21 @@ Deno.serve(async (req) => {
       stripeSecretKey,
     );
     const sellerAccountV2 = await stripeGetV2(
-      `/v2/core/accounts/${encodeURIComponent(String(stripeAccountId))}?include=configuration.merchant&include=configuration.recipient`,
+      `/v2/core/accounts/${encodeURIComponent(String(stripeAccountId))}?include=configuration.merchant&include=configuration.recipient&include=defaults`,
       stripeSecretKey,
     );
+    const isDirectChargeAccount =
+      sellerAccount.metadata?.uc_market_charge_model === "direct";
+    const responsibilities = sellerAccountV2?.defaults?.responsibilities;
+    const stripeOwnsFeesAndLosses =
+      responsibilities?.fees_collector === "stripe" &&
+      responsibilities?.losses_collector === "stripe";
+    if (isDirectChargeAccount && !stripeOwnsFeesAndLosses) {
+      return json(
+        { error: "The seller's Stripe account is not configured for direct payments." },
+        400,
+      );
+    }
     const transfersReady =
       sellerAccountV2?.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers?.status === "active" ||
       sellerAccount.capabilities?.transfers === "active";
@@ -300,7 +319,7 @@ Deno.serve(async (req) => {
       sellerAccount.payouts_enabled !== true ||
       sellerAccount.capabilities?.card_payments !== "active" ||
       sellerAccountV2?.configuration?.merchant?.capabilities?.card_payments?.status !== "active" ||
-      !transfersReady
+      (!isDirectChargeAccount && !transfersReady)
     ) {
       return json(
         { error: "The seller needs to finish Stripe payments setup before online payment is available." },
@@ -353,6 +372,7 @@ Deno.serve(async (req) => {
       ? await stripeGet(
         `/v1/checkout/sessions/${encodeURIComponent(String(claim.session_id))}`,
         stripeSecretKey,
+        isDirectChargeAccount ? String(stripeAccountId) : undefined,
       )
       : null;
 
@@ -402,7 +422,12 @@ Deno.serve(async (req) => {
     );
 
     // Leave payment_method_types unset so Checkout uses Stripe's configured dynamic methods.
-    params.set("payment_intent_data[transfer_data][destination]", String(stripeAccountId));
+    if (!isDirectChargeAccount) {
+      params.set(
+        "payment_intent_data[transfer_data][destination]",
+        String(stripeAccountId),
+      );
+    }
     params.set(
       "success_url",
       `${baseUrl}/?payment=success&purchase_id=${encodeURIComponent(String(purchase.id))}&session_id={CHECKOUT_SESSION_ID}`,
@@ -414,6 +439,9 @@ Deno.serve(async (req) => {
     params.set("metadata[purchase_id]", String(purchase.id));
     params.set("metadata[listing_id]", String(listing.id));
     params.set("metadata[checkout_attempt]", String(claim.attempt));
+    if (isDirectChargeAccount) {
+      params.set("metadata[charge_model]", "direct");
+    }
 
     try {
       session = await stripePost(
@@ -421,6 +449,7 @@ Deno.serve(async (req) => {
         stripeSecretKey,
         params,
         `purchase-${purchase.id}-${claim.attempt}`,
+        isDirectChargeAccount ? String(stripeAccountId) : undefined,
       );
     } catch (error) {
       if (

@@ -183,6 +183,7 @@ Deno.serve(async (req) => {
     }
 
     const event = JSON.parse(body);
+    const isConnectedAccountEvent = typeof event.account === "string";
 
     if (
       event.type === "checkout.session.completed" ||
@@ -191,6 +192,14 @@ Deno.serve(async (req) => {
       const session = event.data?.object;
       const purchaseId = session?.metadata?.purchase_id;
       const listingId = session?.metadata?.listing_id;
+      if (
+        isConnectedAccountEvent &&
+        session?.metadata?.charge_model !== "direct"
+      ) {
+        throw new Error(
+          "Connected-account Checkout event is missing direct-charge metadata",
+        );
+      }
       if (session?.payment_status !== "paid") {
         return json({ received: true });
       }
@@ -220,6 +229,14 @@ Deno.serve(async (req) => {
     ) {
       const session = event.data?.object;
       const purchaseId = session?.metadata?.purchase_id;
+      if (
+        isConnectedAccountEvent &&
+        session?.metadata?.charge_model !== "direct"
+      ) {
+        throw new Error(
+          "Connected-account Checkout event is missing direct-charge metadata",
+        );
+      }
       if (purchaseId && session?.id) {
         const attempt = Number(session.metadata?.checkout_attempt);
         await supabaseRpc(
