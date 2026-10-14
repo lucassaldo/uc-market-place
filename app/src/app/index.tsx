@@ -19,6 +19,7 @@ Image,
 } from "react-native";
 import type { User } from "@supabase/supabase-js";
 import * as ImagePicker from "expo-image-picker";
+import Head from "expo-router/head";
 import { supabase } from "@/lib/supabase";
 
 type Listing = {
@@ -204,9 +205,26 @@ const fetchListingsWithProfiles = async (includeRemoved = false): Promise<Listin
   }));
 };
 
+const SiteMetadata = () => (
+  <Head>
+    <title>UC Market | University of the Cumberlands Marketplace</title>
+    <meta
+      name="description"
+      content="Buy, sell, and connect with the University of the Cumberlands community on UC Market."
+    />
+    <meta property="og:title" content="UC Market | University of the Cumberlands Marketplace" />
+    <meta
+      property="og:description"
+      content="Buy, sell, and connect with the University of the Cumberlands community on UC Market."
+    />
+    <meta name="theme-color" content="#F8F5EF" />
+  </Head>
+);
+
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isMobileHero = width < 600;
+  const isDesktop = width >= 900;
   const [loggedIn, setLoggedIn] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -265,6 +283,12 @@ const [marketSection, setMarketSection] = useState<
  const [purchaseError, setPurchaseError] = useState("");
  const [checkoutError, setCheckoutError] = useState<{ purchaseId: string; message: string } | null>(null);
  const checkoutInFlight = useRef(new Set<string>());
+ const cashPurchaseInFlight = useRef(new Set<string>());
+ const [cashPurchaseFeedback, setCashPurchaseFeedback] = useState<{
+   purchaseId: string;
+   type: "success" | "error";
+   message: string;
+ } | null>(null);
  const [purchaseRequestIds, setPurchaseRequestIds] = useState<Set<string>>(new Set());
  const [showConversations, setShowConversations] = useState(false);
  const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -1109,10 +1133,13 @@ const toggleFavorite = async (listing: Listing) => {
 
   const chooseCashPurchase = async (purchase: Purchase) => {
     if (!authUser || purchase.buyer_id !== authUser.id || purchase.status !== "accepted") return;
+    if (cashPurchaseInFlight.current.has(purchase.id)) return;
+    cashPurchaseInFlight.current.add(purchase.id);
     const sessionVersion = accountSessionVersion.current;
     const isCurrentSession = () =>
       sessionVersion === accountSessionVersion.current &&
       previousAuthUserId.current === authUser.id;
+    setCashPurchaseFeedback(null);
     setPurchaseActionLoading(purchase.id);
     try {
       const { error } = await supabase.rpc("begin_cash_purchase", {
@@ -1120,16 +1147,33 @@ const toggleFavorite = async (listing: Listing) => {
       });
       if (!isCurrentSession()) return;
       if (error) throw error;
-      await refreshMyPurchases(authUser.id);
-      if (!isCurrentSession()) return;
-      await refreshListings();
+      const updatePurchase = (current: Purchase[]): Purchase[] => current.map((item) =>
+        item.id === purchase.id
+          ? { ...item, status: "cash_pending", payment_method: "cash" }
+          : item
+      );
+      setPurchases(updatePurchase);
+      setPurchaseRequestIds((current) => {
+        const next = new Set(current);
+        next.delete(String(purchase.listing_id));
+        return next;
+      });
+      setCashPurchaseFeedback({
+        purchaseId: purchase.id,
+        type: "success",
+        message: "In-person payment selected. No payment has been recorded; meet the seller to complete the exchange.",
+      });
     } catch (error) {
       if (!isCurrentSession()) return;
-      Alert.alert(
-        "Unable to choose in-person payment",
-        error instanceof Error ? error.message : "Please try again.",
-      );
+      setCashPurchaseFeedback({
+        purchaseId: purchase.id,
+        type: "error",
+        message: error instanceof Error
+          ? error.message
+          : "Unable to choose in-person payment. Please try again.",
+      });
     } finally {
+      cashPurchaseInFlight.current.delete(purchase.id);
       if (isCurrentSession()) setPurchaseActionLoading(null);
     }
   };
@@ -1608,6 +1652,7 @@ const toggleFavorite = async (listing: Listing) => {
   if (!loggedIn) {
     return (
       <SafeAreaView style={styles.container}>
+        <SiteMetadata />
         <ScrollView contentContainerStyle={styles.loginContainer} keyboardShouldPersistTaps="handled">
           <View style={[styles.loginLayout, width < 960 && styles.loginLayoutCompact]}>
             <View style={[styles.loginImagePlaceholder, width < 960 && styles.loginImagePlaceholderCompact]}>
@@ -1700,9 +1745,20 @@ const toggleFavorite = async (listing: Listing) => {
         ["pending", "accepted", "cash_pending"].includes(purchase.status)
       )
     : undefined;
+  const filteredListings = listings
+    .filter((item) => category === "All" || item.category === category)
+    .filter((item) => availability === "All" || (item.status ?? "Available") === availability)
+    .filter((item) => [item.title, item.description, item.category, item.seller].filter(Boolean).join(" ").toLowerCase().includes(search.trim().toLowerCase()))
+    .sort((first, second) => {
+      if (sortOrder === "newest") return new Date(second.created_at || 0).getTime() - new Date(first.created_at || 0).getTime();
+      const firstPrice = Number.parseFloat(first.price.replace(/[^0-9.]/g, "")) || 0;
+      const secondPrice = Number.parseFloat(second.price.replace(/[^0-9.]/g, "")) || 0;
+      return sortOrder === "lowPrice" ? firstPrice - secondPrice : secondPrice - firstPrice;
+    });
 
   return (
     <SafeAreaView style={styles.container}>
+      <SiteMetadata />
       <ScrollView>
         <View style={styles.header}>
           <Text style={styles.logoSmall}>UC MARKET</Text>
@@ -1777,14 +1833,18 @@ const toggleFavorite = async (listing: Listing) => {
             </View>
           </View>
 
+        </View>
+
+        <View style={styles.searchContainer}>
           <TextInput
+            accessibilityLabel="Search marketplace listings"
+            returnKeyType="search"
             style={styles.search}
-            placeholder="🔎  Search items, food, services..."
+            placeholder="Search items, food, services..."
             value={search}
             onChangeText={setSearch}
           />
         </View>
-
 
         <View style={{ gap: 8, marginBottom: 12 }}>
   <TouchableOpacity
@@ -1933,23 +1993,22 @@ const toggleFavorite = async (listing: Listing) => {
       </TouchableOpacity>
     ) : null}
 </ScrollView>
-        <View style={styles.list}>
-          {loadingListings ? <ActivityIndicator color="#7A1530" /> : null}
-          {listingError ? <Text style={styles.authError}>{listingError}</Text> : null}
-          {listings
-            .filter((item) => category === "All" || item.category === category)
-            .filter((item) => availability === "All" || (item.status ?? "Available") === availability)
-            .filter((item) => [item.title, item.description, item.category, item.seller].filter(Boolean).join(" ").toLowerCase().includes(search.toLowerCase()))
-            .sort((first, second) => {
-              if (sortOrder === "newest") return new Date(second.created_at || 0).getTime() - new Date(first.created_at || 0).getTime();
-              const firstPrice = Number.parseFloat(first.price.replace(/[^0-9.]/g, "")) || 0;
-              const secondPrice = Number.parseFloat(second.price.replace(/[^0-9.]/g, "")) || 0;
-              return sortOrder === "lowPrice" ? firstPrice - secondPrice : secondPrice - firstPrice;
-            })
-            .map((item) => (
-              <TouchableOpacity
-                key={item.id ?? item.title}
-                style={styles.card}
+<View style={[styles.list, isDesktop && styles.desktopList]}>
+  {loadingListings ? <ActivityIndicator color="#7A1530" /> : null}
+  {listingError ? <Text style={styles.authError}>{listingError}</Text> : null}
+  {!loadingListings && !listingError && filteredListings.length === 0 ? (
+    <Text style={styles.emptyListings}>
+      {listings.length === 0
+        ? "No listings are available yet."
+        : search.trim()
+          ? "No listings match your search and filters."
+          : "No listings match the selected filters."}
+    </Text>
+  ) : null}
+  {filteredListings.map((item) => (
+      <TouchableOpacity
+        key={item.id ?? item.title}
+        style={[styles.card, isDesktop && styles.desktopCard]}
                 onPress={() => openListingDetails(item)}
               >
                 <View style={styles.iconBox}>
@@ -1988,7 +2047,7 @@ const toggleFavorite = async (listing: Listing) => {
                   </TouchableOpacity>
                 ) : null}
               </TouchableOpacity>
-            ))}
+          ))}
         </View>
 
         
@@ -2006,7 +2065,7 @@ const toggleFavorite = async (listing: Listing) => {
         >
           {selectedListing && (
             <SafeAreaView style={styles.detailContainer}>
-              <ScrollView contentContainerStyle={styles.detailContent}>
+              <ScrollView contentContainerStyle={[styles.detailContent, isDesktop && styles.desktopDetailContent]}>
                 <TouchableOpacity
                   style={styles.closeButton}
                   onPress={() => setSelectedListing(null)}
@@ -2018,7 +2077,7 @@ const toggleFavorite = async (listing: Listing) => {
                   <View>
                     <Image
                       source={{ uri: listingImageUrl(activeDetailImage || listingImages(selectedListing)[0])! }}
-                      style={styles.detailMainImage}
+                      style={[styles.detailMainImage, isDesktop && styles.desktopDetailImage]}
                     />
                     {listingImages(selectedListing).length > 1 ? (
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.detailThumbnailRow}>
@@ -2034,7 +2093,7 @@ const toggleFavorite = async (listing: Listing) => {
                     ) : null}
                   </View>
                 ) : (
-                  <View style={styles.detailImagePlaceholder}>
+                  <View style={[styles.detailImagePlaceholder, isDesktop && styles.desktopDetailImage]}>
                     <Text style={styles.placeholderText}>No photo provided</Text>
                   </View>
                 )}
@@ -2096,14 +2155,36 @@ const toggleFavorite = async (listing: Listing) => {
                           disabled={Boolean(selectedPurchase.stripe_checkout_session_id) || purchaseActionLoading === selectedPurchase.id}
                           onPress={() => void chooseCashPurchase(selectedPurchase)}
                         >
-                          <Text style={styles.purchaseCashText}>Pay in person / Cash</Text>
+                          <Text style={styles.purchaseCashText}>
+                            {purchaseActionLoading === selectedPurchase.id ? "Updating..." : "Pay in person / Cash"}
+                          </Text>
                         </TouchableOpacity>
+                        {cashPurchaseFeedback?.purchaseId === selectedPurchase.id ? (
+                          <Text
+                            accessibilityRole={cashPurchaseFeedback.type === "error" ? "alert" : undefined}
+                            accessibilityLiveRegion="polite"
+                            style={cashPurchaseFeedback.type === "error" ? styles.checkoutError : styles.cashPurchaseSuccess}
+                          >
+                            {cashPurchaseFeedback.message}
+                          </Text>
+                        ) : null}
                         {selectedPurchase.stripe_checkout_session_id ? (
                           <Text style={styles.contactHint}>An online Checkout session is active. Cash can be selected after that session expires.</Text>
                         ) : null}
                       </View>
                     ) : selectedPurchase?.status === "cash_pending" ? (
-                      <Text style={styles.contactHint}>Pay in person with the seller. The listing is not marked sold until the seller confirms receiving the cash.</Text>
+                      <>
+                        {cashPurchaseFeedback?.purchaseId === selectedPurchase.id ? (
+                          <Text
+                            accessibilityRole={cashPurchaseFeedback.type === "error" ? "alert" : undefined}
+                            accessibilityLiveRegion="polite"
+                            style={cashPurchaseFeedback.type === "error" ? styles.checkoutError : styles.cashPurchaseSuccess}
+                          >
+                            {cashPurchaseFeedback.message}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.contactHint}>Pay in person with the seller. The listing is not marked sold until the seller confirms receiving the cash.</Text>
+                      </>
                     ) : (
                       <>
                         <TouchableOpacity
@@ -2290,22 +2371,34 @@ const toggleFavorite = async (listing: Listing) => {
   value={itemDescription}
   onChangeText={setItemDescription}
 />
-<Text>Category: {itemCategory}</Text>
-<TouchableOpacity onPress={() => setItemCategory("Furniture")}>
-<Text>Furniture</Text>
-</TouchableOpacity>
-<TouchableOpacity onPress={() => setItemCategory("Electronics")}>
-<Text>Electronics</Text>
-</TouchableOpacity>
-<TouchableOpacity onPress={() => setItemCategory("Clothing")}>
-<Text>Clothing</Text>
-</TouchableOpacity>
-<Text>Status: {listingStatus}</Text>
-{(["Available", "Pending"] as const).map((status) => (
-  <TouchableOpacity key={status} onPress={() => setListingStatus(status)}>
-    <Text>{status}</Text>
-  </TouchableOpacity>
-))}
+<Text style={styles.editFieldLabel}>Category</Text>
+<View style={styles.editOptionWrap}>
+  {categories.filter((categoryName) => categoryName !== "All").map((categoryName) => (
+    <TouchableOpacity
+      key={categoryName}
+      style={[styles.editOption, itemCategory === categoryName && styles.editOptionActive]}
+      onPress={() => setItemCategory(categoryName)}
+    >
+      <Text style={itemCategory === categoryName ? styles.editOptionTextActive : styles.editOptionText}>
+        {categoryName}
+      </Text>
+    </TouchableOpacity>
+  ))}
+</View>
+<Text style={styles.editFieldLabel}>Listing status</Text>
+<View style={styles.editOptionWrap}>
+  {(["Available", "Pending"] as const).map((status) => (
+    <TouchableOpacity
+      key={status}
+      style={[styles.editOption, listingStatus === status && styles.editOptionActive]}
+      onPress={() => setListingStatus(status)}
+    >
+      <Text style={listingStatus === status ? styles.editOptionTextActive : styles.editOptionText}>
+        {status}
+      </Text>
+    </TouchableOpacity>
+  ))}
+</View>
 <TouchableOpacity style={styles.imagePicker} onPress={() => void chooseImages()}>
   <Text style={styles.chatButtonText}>{itemFiles.length ? `${itemFiles.length} image(s) selected` : "Add listing images"}</Text>
 </TouchableOpacity>
@@ -2431,7 +2524,7 @@ const toggleFavorite = async (listing: Listing) => {
                     <Text style={styles.cardTitle}>{purchase.listing?.title || `Listing #${purchase.listing_id}`}</Text>
                     <Text style={styles.seller}>{purchase.listing ? sellerName(purchase.listing) : "Seller unavailable"} · {purchase.price} · {purchaseStatusLabel(purchase)}</Text>
                     {purchase.status === "accepted" ? (
-                      <View style={styles.purchaseActions}>
+                      <View style={styles.purchaseActionGroup}>
                         <TouchableOpacity
                           style={[styles.purchaseAcceptButton, purchaseActionLoading === purchase.id && styles.disabledButton]}
                           disabled={purchaseActionLoading === purchase.id}
@@ -2451,8 +2544,19 @@ const toggleFavorite = async (listing: Listing) => {
                           disabled={Boolean(purchase.stripe_checkout_session_id) || purchaseActionLoading === purchase.id}
                           onPress={() => void chooseCashPurchase(purchase)}
                         >
-                          <Text style={styles.purchaseCashText}>Pay in person / Cash</Text>
+                          <Text style={styles.purchaseCashText}>
+                            {purchaseActionLoading === purchase.id ? "Updating..." : "Pay in person / Cash"}
+                          </Text>
                         </TouchableOpacity>
+                        {cashPurchaseFeedback?.purchaseId === purchase.id ? (
+                          <Text
+                            accessibilityRole={cashPurchaseFeedback.type === "error" ? "alert" : undefined}
+                            accessibilityLiveRegion="polite"
+                            style={cashPurchaseFeedback.type === "error" ? styles.checkoutError : styles.cashPurchaseSuccess}
+                          >
+                            {cashPurchaseFeedback.message}
+                          </Text>
+                        ) : null}
                       </View>
                     ) : null}
                     {purchase.status === "pending" ? (
@@ -2467,7 +2571,18 @@ const toggleFavorite = async (listing: Listing) => {
                       </TouchableOpacity>
                     ) : null}
                     {purchase.status === "cash_pending" ? (
-                      <Text style={styles.contactHint}>Meet the seller to exchange the item and cash. The seller must confirm receipt before the listing is marked sold.</Text>
+                      <>
+                        {cashPurchaseFeedback?.purchaseId === purchase.id ? (
+                          <Text
+                            accessibilityRole={cashPurchaseFeedback.type === "error" ? "alert" : undefined}
+                            accessibilityLiveRegion="polite"
+                            style={cashPurchaseFeedback.type === "error" ? styles.checkoutError : styles.cashPurchaseSuccess}
+                          >
+                            {cashPurchaseFeedback.message}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.contactHint}>Meet the seller to exchange the item and cash. The seller must confirm receipt before the listing is marked sold.</Text>
+                      </>
                     ) : null}
                   </View>
                 </View>
@@ -3773,6 +3888,23 @@ const styles = StyleSheet.create({
     borderColor: "#E1DDD5",
   },
 
+  searchContainer: {
+    width: "100%",
+    maxWidth: 1240,
+    alignSelf: "center",
+    paddingHorizontal: 24,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+
+  emptyListings: {
+    width: "100%",
+    color: "#777",
+    textAlign: "center",
+    paddingVertical: 32,
+    paddingHorizontal: 16,
+  },
+
   sectionTitle: {
     fontSize: 21,
     fontWeight: "700",
@@ -3845,6 +3977,15 @@ const styles = StyleSheet.create({
 
   list: {
     paddingHorizontal: 24,
+    width: "100%",
+    maxWidth: 1240,
+    alignSelf: "center",
+  },
+
+  desktopList: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
   },
 
   card: {
@@ -3856,6 +3997,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#E6E2DB",
+  },
+
+  desktopCard: {
+    width: "48%",
   },
 
   iconBox: {
@@ -3981,6 +4126,12 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
+  desktopDetailContent: {
+    width: "100%",
+    maxWidth: 900,
+    alignSelf: "center",
+  },
+
   closeButton: {
     alignSelf: "flex-end",
     paddingVertical: 8,
@@ -4008,6 +4159,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     backgroundColor: "#F1EEE7",
     resizeMode: "cover",
+  },
+
+  desktopDetailImage: {
+    height: 420,
   },
 
   detailThumbnailRow: {
@@ -4328,6 +4483,11 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 
+  purchaseActionGroup: {
+    gap: 8,
+    marginTop: 10,
+  },
+
   detailPurchaseActions: {
     gap: 8,
     marginTop: 10,
@@ -4340,9 +4500,12 @@ const styles = StyleSheet.create({
 
   purchaseAcceptButton: {
     flex: 1,
+    minHeight: 48,
     borderRadius: 9,
     paddingVertical: 9,
+    paddingHorizontal: 12,
     alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#2F6B45",
   },
 
@@ -4353,16 +4516,29 @@ const styles = StyleSheet.create({
 
   purchaseCashButton: {
     flex: 1,
+    minHeight: 48,
     borderRadius: 9,
     borderWidth: 1,
     borderColor: "#7A1530",
     paddingVertical: 9,
+    paddingHorizontal: 12,
     alignItems: "center",
+    justifyContent: "center",
   },
 
   purchaseCashText: {
     color: "#7A1530",
     fontWeight: "800",
+  },
+
+  cashPurchaseSuccess: {
+    color: "#2F6B45",
+    backgroundColor: "#E4F1E8",
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
   },
 
   purchaseDeclineButton: {
@@ -4423,6 +4599,13 @@ const styles = StyleSheet.create({
   },
 
   editOptionRow: {
+    gap: 8,
+    paddingBottom: 8,
+  },
+
+  editOptionWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     paddingBottom: 8,
   },
